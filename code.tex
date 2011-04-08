@@ -1,0 +1,48 @@
+\section*{Introduction}
+
+\par The code is run on a rectangular mesh with linear 4-node squares, 3-nodes triangular elements and 9-node quadratic quadratic elements with pre-specified Dirichlet and Neumann boundary conditions.
+
+The equation being solved is the,
+\begin{equation}
+\nabla \cdot (\kappa (x,y) \cdot \nabla T) + f(x,y) = 0
+\end{equation}
+
+where $\kappa$ is the anisotropic heat conductivity tensor,
+\[
+\kappa (x,y) = \begin{bmatrix}
+     \kappa_{xx} & \kappa_{xy} \\
+     \kappa_{yx} & \kappa_{yy} \end{bmatrix}
+     \]
+     
+The boundary conditions along the four sides of the domain can be Dirichlet $T|_{\Gamma} = T_o$ or Neumann, $\vec{n}\cdot(\kappa (x,y) \nabla T|_{\Gamma}) = q_n$.
+
+\section*{Running the Code}
+
+\par The only files that SHOULD be changed is main.m and the conductivity-and-forcing.m.
+\subsection*{Inputs in main.m}
+\subsubsection*{Defining domain size:}
+\textbf{a}: horizontal length of the domain \\
+\textbf{b}: vertical length of the domain \\
+
+\subsubsection*{Defining boundary conditions:}
+\textbf{\textit{boundary}\_bc\_type}: is used to specify the boundary condition type at \textit{boundary} (\textit{boundary} should be for top, right, left or bottom); entering 0 (zero) for Dirichlet and 1 (one) for Neumann. \\
+
+\textbf{\textit{boundary}\_bc\_val}: the value at that boundary.
+
+\subsubsection*{Choosing element type:}
+\textbf{elem\_type}: defines the type of elements to be used, enter: 1 for 3-node linear, 2 for 4-node linear and 3 for 9-node quadratic elements. Note: the code does not allow for mixed element types.
+
+\subsubsection*{Gauss Legendre Quadrature Order:}
+\textbf{order}: The code also allows for the selection of the order of the quadratures to be used. The triangular element can have order 1, 3, 4, 6, 7, 9, 12, 13 and the default is 1. The square elements can be 1, 2, 3 and 4 order accuracy, with 1 as default also.
+
+\subsection*{Inputs in conductivity\_and\_forcing.m}
+\par The analytical expressions for the individual components of the thermal conductivity tensor and the heat source and be entered in the file.
+
+\section*{FSELIB Functions Used}
+\begin{itemize}
+\item gauss\_trgl.m, chapter 4 of, Pozrikidis, described on page 287
+	\begin{itemize}
+	\item The function calculates the Gauss quadrature points for a triangle and returns the xi's, eta's and the
+	      weights for a pre-specified order of accuracy.
+	\end{itemize}
+\end{itemize}
