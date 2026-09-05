@@ -45,8 +45,9 @@ def main(argv=None):
         prob = FlowProblem(mesh, mu=1.0 / re, rho=1.0, bc={**walls, "top": (1.0, 0.0)})
         sol = solve_flow(prob, U0=U, verbose=True)
         U = sol.U
+        B = sol.assembler.Bx + sol.assembler.By
         print(f"Re = {re:g}: {sol.info['iterations']} Newton iterations, "
-              f"|div u| = {sol.divergence_norm():.2e}")
+              f"discrete continuity |B u| = {np.linalg.norm(B @ sol.U):.2e}")
 
     mid = np.isclose(mesh.x, 0.5)
     u, y = sol.u[mid], mesh.y[mid]
