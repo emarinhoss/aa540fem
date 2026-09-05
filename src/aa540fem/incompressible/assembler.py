@@ -224,7 +224,7 @@ class FlowAssembler:
             inv_dt2 = (2.0 / dt) ** 2 if dt is not None else 0.0
             tau = 1.0 / np.sqrt(inv_dt2 + (2.0 * umag / h) ** 2 + (4.0 * nu / h ** 2) ** 2)
             re_h = umag * h / (2.0 * nu)
-            gamma = 0.5 * h * umag * np.minimum(1.0, re_h / 3.0)
+            gamma = 0.5 * h * umag * np.minimum(1.0, re_h / 3.0) if prob.grad_div else 0.0 * umag
             dgrad = (b.dphi_dx, b.dphi_dy)
 
             if stab:

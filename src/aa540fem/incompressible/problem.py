@@ -34,6 +34,11 @@ class FlowProblem:
                   equations plus grad-div (LSIC) stabilisation; consistent
                   (an exact solution stays exact), needed at high cell
                   Reynolds numbers.  Off by default (plain Galerkin).
+    grad_div    : include the grad-div (LSIC) term in the stabilisation
+                  (``gamma = h |u| / 2 min(1, Re_h / 3)``); it helps the steady
+                  Newton iteration at high Reynolds number but adds numerical
+                  dissipation to unsteady wakes, so switch it off for
+                  vortex-shedding runs.
     pspg        : add PSPG pressure stabilisation to the continuity equation
                   (not needed for the inf-sup stable Taylor-Hood pair; ignored
                   by the RK45 time integrator).
@@ -53,6 +58,7 @@ class FlowProblem:
     pin_value: object = 0.0
     order: int | None = None
     stabilisation: bool = False
+    grad_div: bool = True
     pspg: bool = False
     eddy_viscosity: object = None
 

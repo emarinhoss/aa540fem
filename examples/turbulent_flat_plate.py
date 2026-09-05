@@ -83,6 +83,8 @@ def main(argv=None):
     parser.add_argument("--re", type=float, default=1e6, help="U / nu per unit length")
     parser.add_argument("--max-outer", type=int, default=40)
     parser.add_argument("--tol", type=float, default=1e-3)
+    parser.add_argument("--viscosity-ramp", type=float, nargs="+", default=[100.0, 10.0, 1.0],
+                        help="laminar-viscosity factors of the start-up continuation")
     parser.add_argument("--outdir", default="turb_plate_out")
     parser.add_argument("--no-plot", action="store_true")
     args = parser.parse_args(argv)
@@ -90,7 +92,8 @@ def main(argv=None):
     outdir.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
-    rans, res = run(args.mesh, args.re, max_outer=args.max_outer, tol=args.tol)
+    rans, res = run(args.mesh, args.re, max_outer=args.max_outer, tol=args.tol,
+                    viscosity_ramp=tuple(args.viscosity_ramp))
     print(f"RANS: {len(rans.history)} outer iterations, converged = {rans.converged}, "
           f"{time.time() - t0:.0f} s")
     rex, cf = res["Re_x"], res["Cf"]

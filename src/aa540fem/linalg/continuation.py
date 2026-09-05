@@ -20,7 +20,8 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
     switched evolution relaxation ``dtau_{k+1} = dtau_k |R_k| / |R_{k+1}|``
     (bounded by factors 0.5 and 10) on the steady residual, so the iteration
     turns into plain Newton as the residual vanishes.  A step whose inner
-    iteration diverges is retried with ``dtau / 4``.  ``M`` is the mass
+    iteration diverges (its own residual growing tenfold, or non-finite) is
+    retried with ``dtau / 4``.  ``M`` is the mass
     matrix (zero pressure block), so the continuity equation is never
     relaxed.
     """
@@ -43,14 +44,19 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
     k = 0
     retries = 0
     while k < max_steps and r > target:
-        # backward-Euler step from U with Newton on R(V) + M (V - U)/dtau
+        # backward-Euler step from U with Newton on G(V) = R(V) + M (V - U)/dtau
         V, RV, JV = U, R, J
         step_res = None
+        g_prev = None
         ok = True
         for _ in range(inner_newton):
             G = RV + M @ ((V - U) / dtau)
             G[fixed] = 0.0
             g = np.linalg.norm(G)
+            if not np.isfinite(g) or (g_prev is not None and g > 10.0 * g_prev):
+                ok = False                      # the inner iteration is diverging
+                break
+            g_prev = g
             if step_res is None:
                 step_res = g
             if g <= inner_rtol * step_res or g <= atol:
@@ -60,13 +66,12 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
                 elim.apply_rhs(-G, zero))
             V = V + delta
             RV, JV, rV = evaluate(V)
-            if not np.isfinite(rV) or rV > 1e3 * max(r, 1.0):
-                ok = False
-                break
+        if ok and not np.isfinite(np.linalg.norm(RV)):
+            ok = False
         if not ok:
             retries += 1
             dtau *= 0.25
-            if retries > 20:
+            if retries > 40:
                 break
             if verbose:
                 print(f"  PTC step rejected, dtau = {dtau:.3e}")

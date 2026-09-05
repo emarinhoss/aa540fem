@@ -44,7 +44,7 @@ class RANSSolution:
 
 def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                max_outer: int = 40, tol: float = 1e-3, relax: float = 0.7, verbose=False,
-               force_tag=None, U0=None) -> RANSSolution:
+               force_tag=None, U0=None, viscosity_ramp=(1.0,)) -> RANSSolution:
     """Steady RANS solution with the Spalart-Allmaras model.
 
     Parameters
@@ -60,8 +60,36 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
     relax       : under-relaxation of ``nu_tilde`` between outer iterations.
     force_tag   : boundary whose force is reported in the history (default:
                   the first wall tag).
+    viscosity_ramp : factors applied to the laminar viscosity in turn, e.g.
+                  ``(100, 10, 1)``: the coupled problem is first converged
+                  (loosely) at the higher viscosities and each stage starts
+                  from the previous one, which is far more robust than
+                  starting the wall-resolved high-Reynolds-number case from
+                  rest.  The last factor must be 1.
     """
     wall_tags = [wall_tags] if isinstance(wall_tags, str) else list(wall_tags)
+    if viscosity_ramp[-1] != 1.0:
+        raise ValueError("viscosity_ramp must end with the factor 1")
+    if len(viscosity_ramp) > 1:
+        mu_target = problem.mu
+        result = None
+        for k, factor in enumerate(viscosity_ramp):
+            problem.mu = mu_target * factor
+            last = k == len(viscosity_ramp) - 1
+            if verbose:
+                print(f"RANS viscosity ramp: factor {factor:g}")
+            result = _solve_rans(problem, wall_tags, nu_tilde_inf, None,
+                                 max_outer if last else 6, tol if last else 10 * tol, relax,
+                                 verbose, force_tag, None if result is None else result.flow.U,
+                                 None if result is None else result.nu_tilde)
+        problem.mu = mu_target
+        return result
+    return _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, verbose,
+                       force_tag, U0, None)
+
+
+def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, verbose,
+                force_tag, U0, nu_tilde0):
     mesh = problem.mesh
     nu = problem.mu / problem.rho
     model = model or SpalartAllmaras(nu)
@@ -79,7 +107,7 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
     fixed_nodes = np.array(sorted(fixed), dtype=int)
     fixed_vals = np.array([fixed[n] for n in fixed_nodes])
 
-    nt = np.full(mesh.n_nodes, nt_inf)
+    nt = np.full(mesh.n_nodes, nt_inf) if nu_tilde0 is None else np.array(nu_tilde0, dtype=float)
     nt[fixed_nodes] = fixed_vals
     nu_t = model.eddy_viscosity(nt)
     problem.eddy_viscosity = problem.rho * nu_t

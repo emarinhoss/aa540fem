@@ -99,7 +99,7 @@ class SpalartAllmaras:
         grad2 = gx ** 2 + gy ** 2
         # positive branch
         s_tilde = np.maximum(self.modified_vorticity(nt, omega, d), 1e-300)
-        r = np.minimum(nt / (s_tilde * self.kappa ** 2 * d ** 2), self.r_limit)
+        r = np.clip(nt / (s_tilde * self.kappa ** 2 * d ** 2), -self.r_limit, self.r_limit)
         g = r + self.cw2 * (r ** 6 - r)
         fw = g * ((1.0 + self.cw3 ** 6) / (g ** 6 + self.cw3 ** 6)) ** (1.0 / 6.0)
         ft2 = self.ct3 * np.exp(-self.ct4 * chi ** 2) if self.ft2 else 0.0
