@@ -334,10 +334,16 @@ continuation, 26 s) gives a skin friction within 4 % of Blasius for
 1e4 < Re_x < 1e5 (mean 2.8 %) and velocity profiles within 0.015 of the
 similarity solution at three stations; near the leading edge the
 Navier-Stokes skin friction exceeds Blasius, as it should.  The cylinder at
-Re = 100 (`examples/cylinder_shedding.py`) sheds vortices; its Strouhal
-number and force amplitudes are compared with the Schaefer-Turek 2D-2
-reference (St = 0.30, C_D,max = 3.23, C_L,max = 1.00) in the example
-output.  The airfoil case at Re = 1000 has no
+Re = 100 (`examples/cylinder_shedding.py`, stabilised Crank-Nicolson,
+dt = 0.005, one hour) sheds vortices with
+
+| Schaefer-Turek 2D-2 | computed | reference |
+|---------------------|----------|-----------|
+| Strouhal number     | 0.3014   | 0.2995    |
+| C_D,max             | 3.2286   | 3.2298    |
+| C_L,max             | 0.9918   | 1.0002    |
+
+The airfoil case at Re = 1000 has no
 exact reference; `examples/airfoil.py` on its 15k-node mesh (dt = 0.05,
 160 steps, 4 minutes) gives
 
