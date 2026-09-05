@@ -31,6 +31,7 @@ from .geometry import Mesh, geometry
 from .nonlinear import NewtonResult, newton_iterate, solve_nonlinear
 from .postprocess import CellField, element_gradient, error_norms
 from .quadrature import gauss_legendre_quad, gauss_trgl, quadrature_rule
+from .rk import RKResult, rk45
 from .shape_functions import interpfunc, interpfunc_3, interpfunc_4, interpfunc_6, interpfunc_9
 from .solver import (
     DIRICHLET,
@@ -72,6 +73,7 @@ __all__ = [
     "assemble", "assemble_operators", "solve",
     "TransientSolution", "solve_transient",
     "NewtonResult", "newton_iterate", "solve_nonlinear",
+    "RKResult", "rk45",
     "FlowProblem", "FlowSolution", "TaylorHoodSpace", "TransientFlowSolution",
     "solve_flow", "solve_flow_transient",
 ]

@@ -162,7 +162,8 @@ def supg_tau(ux, uy, k11, k12, k21, k22, dphi_dx, dphi_dy, dt=None):
 
 
 def elem_operators(x, y, phi, dphi_dxi, dphi_deta, w, material=None, velocity=None,
-                   rho_c=1.0, supg=True, t=0.0, dt=None, T=None) -> ElementMatrices:
+                   rho_c=1.0, supg=True, t=0.0, dt=None, T=None,
+                   newton_terms: bool = True) -> ElementMatrices:
     """Element matrices of ``rho_c dT/dt + u.grad T - div(kappa grad T) = f``.
 
     Parameters are those of :func:`elem_eqn` plus
@@ -182,6 +183,8 @@ def elem_operators(x, y, phi, dphi_dxi, dphi_deta, w, material=None, velocity=No
                returned; the derivatives are central finite differences in
                ``T``.  A temperature-dependent ``velocity``/``rho_c`` is
                evaluated at ``T`` but not differentiated.
+    newton_terms : set False to skip the ``dA`` computation (explicit time
+               stepping only needs the residual).
 
     Returns an :class:`ElementMatrices` tuple ``(K, C, M, f, dA)``.
     """
@@ -227,7 +230,7 @@ def elem_operators(x, y, phi, dphi_dxi, dphi_deta, w, material=None, velocity=No
             fe = fe + np.einsum("eq,eqi->ei", wh * f, wgt)
 
     dAe = None
-    if Tq is not None and accepts_temperature(material):
+    if Tq is not None and newton_terms and accepts_temperature(material):
         dAe = _newton_terms(material, X, Y, t, Tq, T, wh, phi, dphi_dx, dphi_dy, wgt)
     return ElementMatrices(Ke, Ce, Me, fe, dAe)
 

@@ -158,7 +158,7 @@ def test_transient_nonlinear_manufactured_solution():
 
     p = Problem(a=1.0, b=1.0, elems=12, elem_type="quad9", bc_type=ALL_DIRICHLET,
                 bc_val={s: 0.0 for s in SIDES}, material=material)
-    sol = solve_transient(p, dt=0.1, t_end=1.0, theta=0.5, T0=_sin)
+    sol = solve_transient(p, scheme="theta", dt=0.1, t_end=1.0, theta=0.5, T0=_sin)
     assert sol.info["nonlinear"] == "newton"
     assert max(sol.info["newton_iterations"]) <= 6
     err = np.abs(sol.T - exact(sol.mesh.x, sol.mesh.y, 1.0)).max()
@@ -167,7 +167,7 @@ def test_transient_nonlinear_manufactured_solution():
 
 def test_transient_nonlinear_reaches_steady_kirchhoff_state():
     p = kirchhoff("quad9", 6)
-    sol = solve_transient(p, dt=0.25, t_end=5.0, theta=1.0, T0=0.0)
+    sol = solve_transient(p, scheme="theta", dt=0.25, t_end=5.0, theta=1.0, T0=0.0)
     steady = solve(p)
     assert np.allclose(sol.T, steady.T, atol=2e-3)
     assert len(sol.info["newton_iterations"]) == 20

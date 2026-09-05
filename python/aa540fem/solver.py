@@ -22,7 +22,7 @@ from .boundary import DirichletEliminator, neumann
 from .element import elem_operators
 from .elements import get_element
 from .geometry import Mesh, geometry
-from .util import accepts_temperature, accepts_time, values_at
+from .util import accepts_temperature, accepts_time, values_at, values_rate
 
 DIRICHLET = 0
 NEUMANN = 1
@@ -171,14 +171,15 @@ class Solution:
 
 # ------------------------------------------------------------------ assembly
 def assemble_operators(mesh: Mesh, problem: Problem, t: float = 0.0, dt=None,
-                       T=None, verbose: bool = False) -> Operators:
+                       T=None, verbose: bool = False, newton_terms: bool = True) -> Operators:
     """Assemble diffusion, convection and mass matrices and the load vector.
 
     Every cell block of the mesh is integrated with its own element;
     ``problem.order`` applies to all blocks and ``None`` uses each element's
     ``full_order``.  ``t`` is passed to time-dependent coefficients, ``dt``
     selects the transient SUPG parameter and ``T`` (nodal values) is needed
-    for temperature-dependent coefficients; it also fills ``Operators.dA``.
+    for temperature-dependent coefficients; it also fills ``Operators.dA``
+    unless ``newton_terms=False``.
     """
     N = mesh.n_nodes
     rows, cols = [], []
@@ -201,7 +202,8 @@ def assemble_operators(mesh: Mesh, problem: Problem, t: float = 0.0, dt=None,
         em = elem_operators(
             mesh.x[conn], mesh.y[conn], phi, dphi_dxi, dphi_deta, w,
             material=problem.material, velocity=problem.velocity, rho_c=problem.rho_c,
-            supg=problem.supg, t=t, dt=dt, T=None if T is None else T[conn])
+            supg=problem.supg, t=t, dt=dt, T=None if T is None else T[conn],
+            newton_terms=newton_terms)
 
         n = el.n_nodes
         rows.append(np.repeat(conn, n, axis=1).ravel())   # conn[e, i] for each j
@@ -220,7 +222,7 @@ def assemble_operators(mesh: Mesh, problem: Problem, t: float = 0.0, dt=None,
         m.eliminate_zeros()
         return m
 
-    dA = mat(dv) if T is not None and problem.nonlinear else None
+    dA = mat(dv) if T is not None and newton_terms and problem.nonlinear else None
     ops = Operators(mat(kv), mat(cv), mat(mv), F, dA)
     if verbose:
         print("Finished Assembling Global Stiffness Matrix.")
@@ -243,13 +245,17 @@ def neumann_loads(mesh: Mesh, F, bc_type: dict, bc_val: dict, t: float = 0.0):
     return F
 
 
-def dirichlet_data(mesh: Mesh, bc_type: dict, bc_val: dict, t: float = 0.0):
-    """Constrained nodes and their values; the last listed tag wins at shared nodes."""
+def dirichlet_data(mesh: Mesh, bc_type: dict, bc_val: dict, t: float = 0.0, rate: bool = False):
+    """Constrained nodes and their values; the last listed tag wins at shared nodes.
+
+    With ``rate=True`` the time derivatives of the values are returned instead.
+    """
+    evaluate = values_rate if rate else values_at
     values = {}
     for tag, kind in bc_type.items():
         if kind == DIRICHLET:
             nodes = mesh.bc_nodes[tag]
-            vals = values_at(bc_val[tag], mesh.x[nodes], mesh.y[nodes], t)
+            vals = evaluate(bc_val[tag], mesh.x[nodes], mesh.y[nodes], t)
             values.update(zip(nodes.tolist(), vals.tolist()))
     nodes = np.array(sorted(values), dtype=int)
     return nodes, np.array([values[n] for n in nodes])

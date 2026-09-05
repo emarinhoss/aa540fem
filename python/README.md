@@ -14,7 +14,8 @@ boundaries carry Dirichlet (`T = T0`) or Neumann (`n . kappa grad T = q_n`)
 conditions by name.  Elements are 3- and 6-node triangles or 4- and 9-node
 quadrilaterals, on the built-in structured rectangle or on any mesh read
 through meshio (Gmsh `.msh` files in particular).  Time integration uses
-the theta-method (backward Euler or Crank-Nicolson).
+the adaptive explicit Runge-Kutta 45 (Dormand-Prince) by default or the
+implicit theta-method (backward Euler or Crank-Nicolson).
 
 It also solves the incompressible Navier-Stokes equations
 
@@ -172,24 +173,32 @@ flow = FlowProblem(mesh, mu=1e-3, rho=1.0,
 sol = solve_flow(flow)
 fx, fy = sol.forces("cylinder")               # traction integral of -p I + mu (grad u + grad u^T)
 
-# Time dependent (theta = 0.5 Crank-Nicolson), Dirichlet values may take t
-run = solve_flow_transient(flow, dt=0.01, t_end=1.0, theta=0.5, store_every=10,
-                           startup_steps=4,                 # backward Euler first (impulsive start)
+# Time dependent: adaptive RK45 (default) with the fields stored every 0.1 time units
+run = solve_flow_transient(flow, dt=0.005, t_end=1.0, output_interval=0.1,
                            callback=lambda n, t, sol: print(t, sol.forces("cylinder")))
+# ... or Crank-Nicolson at a fixed step with backward-Euler start-up (impulsive start)
+run = solve_flow_transient(flow, dt=0.01, t_end=1.0, scheme="theta", theta=0.5,
+                           store_every=10, startup_steps=4)
 run.final.speed
 run.save_series("out/flow")                   # .vtu per step + .pvd
 ```
 
-The transient solver takes one Newton factorisation per step and reuses it
-while the iteration contracts well (modified Newton), refreshing it
-otherwise.
+For the incompressible system the pressure is a constraint multiplier, not
+an ODE unknown, so the RK45 scheme is applied to the velocity with a
+pressure projection at every stage: each stage solves the constant
+saddle-point system `[[M, -B^T], [B, 0]]` (factorised once for the whole
+run), which keeps the discrete velocity exactly divergence-free and needs
+no Newton iteration.  Its step is limited by the viscous and convective
+stability limits of the finest cells.  The theta scheme takes one Newton
+factorisation per step and reuses it while the iteration contracts well
+(modified Newton), refreshing it otherwise; it allows much larger steps.
 
 `examples/airfoil.py` is the aerodynamic case: a NACA 0012 at 5 degrees
 angle of attack (the profile is rotated in the mesh so the freestream is
-along x), chord Reynolds number 1000, impulsively started and integrated at
-a fixed time step with fields written every `--store-every` steps and lift
-and drag coefficients logged every step to `forces.csv`, followed by a
-steady Newton solve from the final state.  `make_meshes.py` builds the
+along x), chord Reynolds number 1000, impulsively started and integrated
+with RK45 (or `--scheme theta`) with fields written at fixed output times
+(`--output-interval`) and lift and drag coefficients logged at every step
+to `forces.csv`, followed by a steady Newton solve from the final state.  `make_meshes.py` builds the
 far-field mesh with Gmsh (`naca4()` generates any 4-digit profile, and
 `make_airfoil(alpha_deg=...)` any angle of attack).
 
@@ -273,7 +282,8 @@ settling, which take many chord times at this Reynolds number.
 | quad9     | 3.0      | 2.0      |
 
 and `--transient` on the decaying mode `exp(-pi^2 t) sin(pi x)` gives
-temporal orders 1.0 (backward Euler) and 2.0 (Crank-Nicolson).
+temporal orders 1.0 (backward Euler), 2.0 (Crank-Nicolson) and 5.0
+(fixed-step RK45).
 
 ## Differences from the MATLAB code
 

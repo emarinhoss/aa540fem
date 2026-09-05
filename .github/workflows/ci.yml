@@ -29,10 +29,11 @@ jobs:
           python main.py -o ''
           python examples/annulus.py --mesh examples/annulus_quad9.msh --method cg --no-plot
           python scripts/convergence.py --elems 4 8
-          python scripts/convergence.py --transient --dts 0.02 0.01
+          python scripts/convergence.py --transient --dts 0.005 0.0025
           python examples/convection_diffusion.py --no-plot
           python examples/rotating_hill.py --no-plot --steps 100 --series ''
           python examples/nonlinear_conduction.py --no-plot
           python examples/cavity.py --no-plot --elems 16 --vtk ''
           python examples/cylinder.py --no-plot --vtk ''
-          python examples/airfoil.py --no-plot --no-steady --dt 0.05 --t-end 0.1 --store-every 1 --outdir /tmp/airfoil
+          python examples/airfoil.py --no-plot --no-steady --t-end 0.05 --output-interval 0.05 --outdir /tmp/airfoil
+          python examples/airfoil.py --no-plot --no-steady --scheme theta --dt 0.05 --t-end 0.1 --output-interval 0.05 --outdir /tmp/airfoil_theta

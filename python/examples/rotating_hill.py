@@ -1,10 +1,10 @@
 """Gaussian hill advected one full revolution by a rotating velocity field.
 
     python examples/rotating_hill.py [--elems 40] [--steps 200] [--sigma 0.15]
-                                     [--series hill] [--no-plot]
+                                     [--scheme rk45|theta] [--series hill] [--no-plot]
 
-Domain [-1, 1]^2, u = (-y, x), negligible diffusion, Crank-Nicolson in time
-with SUPG in space.  After one revolution the exact solution equals the
+Domain [-1, 1]^2, u = (-y, x), negligible diffusion, adaptive RK45 (default)
+or Crank-Nicolson in time with SUPG in space.  After one revolution the exact solution equals the
 initial hill, so the peak retention and L2 error measure the numerical
 dissipation and dispersion.  Writes a ParaView time series (``hill.pvd``).
 """
@@ -28,6 +28,7 @@ def main(argv=None):
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--sigma", type=float, default=0.15)
     parser.add_argument("--elem-type", default="quad")
+    parser.add_argument("--scheme", default="rk45", choices=["rk45", "theta"])
     parser.add_argument("--series", default="hill", help="prefix of the .vtu/.pvd output")
     parser.add_argument("--no-plot", action="store_true")
     args = parser.parse_args(argv)
@@ -45,8 +46,12 @@ def main(argv=None):
                 velocity=lambda x, y: (-y, x))
 
     period = 2 * np.pi
-    sol = solve_transient(p, dt=period / args.steps, t_end=period, theta=0.5, T0=hill,
-                          store_every=max(1, args.steps // 20), verbose=True)
+    if args.scheme == "rk45":
+        sol = solve_transient(p, dt=period / args.steps, t_end=period, T0=hill, scheme="rk45",
+                              output_interval=period / 20, verbose=True)
+    else:
+        sol = solve_transient(p, dt=period / args.steps, t_end=period, theta=0.5, T0=hill,
+                              scheme="theta", store_every=max(1, args.steps // 20), verbose=True)
     err = error_norms(mesh, sol.T, hill)["L2"]
     print(f"peak retained: {sol.T.max():.3f} (initial 1), min T = {sol.T.min():+.4f}, "
           f"L2 error = {err:.3e}")

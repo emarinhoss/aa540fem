@@ -27,8 +27,8 @@ def mode_exact(x, t):
 def test_backward_euler_and_crank_nicolson_accuracy():
     p = decaying_mode()
     T0 = lambda x, y: np.sin(np.pi * x)
-    be = solve_transient(p, dt=0.01, t_end=0.1, theta=1.0, T0=T0)
-    cn = solve_transient(p, dt=0.01, t_end=0.1, theta=0.5, T0=T0)
+    be = solve_transient(p, scheme="theta", dt=0.01, t_end=0.1, theta=1.0, T0=T0)
+    cn = solve_transient(p, scheme="theta", dt=0.01, t_end=0.1, theta=0.5, T0=T0)
     exact = mode_exact(be.mesh.x, 0.1)
     err_be = np.abs(be.T - exact).max()
     err_cn = np.abs(cn.T - exact).max()
@@ -43,8 +43,10 @@ def test_backward_euler_and_crank_nicolson_accuracy():
 def test_temporal_convergence_order(theta, expected):
     p = decaying_mode()
     T0 = lambda x, y: np.sin(np.pi * x)
-    ref = solve_transient(p, dt=1e-3, t_end=0.1, theta=0.5, T0=T0, store_every=100).T
-    errs = [np.abs(solve_transient(p, dt=dt, t_end=0.1, theta=theta, T0=T0, store_every=1000).T
+    ref = solve_transient(p, scheme="theta",
+        dt=1e-3, t_end=0.1, theta=0.5, T0=T0, store_every=100).T
+    errs = [np.abs(solve_transient(p, scheme="theta",
+        dt=dt, t_end=0.1, theta=theta, T0=T0, store_every=1000).T
                    - ref).max() for dt in (0.02, 0.01, 0.005)]
     rates = np.log2(np.array(errs[:-1]) / np.array(errs[1:]))
     assert np.all(rates > expected - 0.25), (errs, rates)
@@ -65,17 +67,20 @@ def test_manufactured_solution_with_convection_and_time_dependent_dirichlet():
     p = Problem(a=1.0, b=1.0, elems=12, elem_type="quad9", bc_type=ALL_DIRICHLET,
                 bc_val={s_: exact for s_ in SIDES}, material=material,
                 velocity=lambda x, y: u, supg=False)
-    cn = solve_transient(p, dt=0.1, t_end=1.0, theta=0.5, T0=lambda x, y: exact(x, y, 0.0))
+    cn = solve_transient(p, scheme="theta",
+        dt=0.1, t_end=1.0, theta=0.5, T0=lambda x, y: exact(x, y, 0.0))
     err = np.abs(cn.T - exact(cn.mesh.x, cn.mesh.y, 1.0)).max()
     assert err < 5e-3
     # Crank-Nicolson is exact in time for solutions linear in t: halving dt changes nothing
-    cn2 = solve_transient(p, dt=0.05, t_end=1.0, theta=0.5, T0=lambda x, y: exact(x, y, 0.0))
+    cn2 = solve_transient(p, scheme="theta",
+        dt=0.05, t_end=1.0, theta=0.5, T0=lambda x, y: exact(x, y, 0.0))
     assert np.allclose(cn.T, cn2.T, atol=1e-9)
     # right side carries the time-dependent Dirichlet value (1 + t) x = 2 at t = 1
     assert np.allclose(cn.T[cn.mesh.bc_nodes["right"]], 2.0)
     # SUPG on: still accurate
     p.supg = True
-    supg = solve_transient(p, dt=0.1, t_end=1.0, theta=0.5, T0=lambda x, y: exact(x, y, 0.0))
+    supg = solve_transient(p, scheme="theta",
+        dt=0.1, t_end=1.0, theta=0.5, T0=lambda x, y: exact(x, y, 0.0))
     assert np.abs(supg.T - exact(supg.mesh.x, supg.mesh.y, 1.0)).max() < 1e-2
 
 
@@ -99,7 +104,7 @@ def test_neumann_flux_heats_insulated_bar():
                 bc_type={"right": NEUMANN, "left": DIRICHLET},
                 bc_val={"right": 1.0, "left": 0.0},
                 material=lambda x, y: (1.0, 0.0, 0.0, 1.0, 0.0))
-    sol = solve_transient(p, dt=0.1, t_end=5.0, theta=1.0)
+    sol = solve_transient(p, scheme="theta", dt=0.1, t_end=5.0, theta=1.0)
     # steady state T = x is reached: n.grad T = 1 on the right, T = 0 on the left
     assert np.allclose(sol.T, sol.mesh.x, atol=1e-3)
 
@@ -107,7 +112,7 @@ def test_neumann_flux_heats_insulated_bar():
 def test_series_output(tmp_path):
     pytest.importorskip("meshio")
     p = decaying_mode(elems=3, elem_type="quad")
-    sol = solve_transient(p, dt=0.05, t_end=0.2, theta=0.5,
+    sol = solve_transient(p, scheme="theta", dt=0.05, t_end=0.2, theta=0.5,
                           T0=lambda x, y: np.sin(np.pi * x), store_every=2)
     assert len(sol.snapshots) == 3 and np.allclose(sol.times, [0, 0.1, 0.2])
     pvd = sol.save_series(tmp_path / "out" / "mode")
@@ -124,6 +129,6 @@ def test_series_output(tmp_path):
 def test_invalid_time_step_arguments():
     p = decaying_mode(elems=2, elem_type="quad")
     with pytest.raises(ValueError):
-        solve_transient(p, dt=0.3, t_end=1.0)
+        solve_transient(p, scheme="theta", dt=0.3, t_end=1.0)
     with pytest.raises(ValueError):
-        solve_transient(p, dt=0.1, t_end=1.0, theta=1.5)
+        solve_transient(p, scheme="theta", dt=0.1, t_end=1.0, theta=1.5)

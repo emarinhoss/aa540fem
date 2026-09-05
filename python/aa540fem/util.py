@@ -94,3 +94,11 @@ def values_at(val, x, y, t=0.0, T=None):
         return np.broadcast_to(np.asarray(call_coeff(val, x, y, t, T), dtype=float),
                                x.shape).copy()
     return np.full(x.shape, float(val))
+
+
+def values_rate(val, x, y, t=0.0, T=None, h: float = 1e-6):
+    """Time derivative of a prescribed value by a central difference (zero if constant)."""
+    if not accepts_time(val):
+        return np.zeros(np.shape(np.asarray(x, dtype=float)))
+    step = h * max(1.0, abs(t))
+    return (values_at(val, x, y, t + step, T) - values_at(val, x, y, t - step, T)) / (2 * step)

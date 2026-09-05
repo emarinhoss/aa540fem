@@ -51,7 +51,7 @@ def test_stokes_and_transient_reach_poiseuille():
     stokes = solve_flow(p, stokes=True)
     assert stokes.info["stokes"] and stokes.info["iterations"] == 1
     assert np.allclose(stokes.u, inflow(p.mesh.x, p.mesh.y), atol=1e-10)
-    run = solve_flow_transient(p, dt=0.1, t_end=3.0, theta=1.0, store_every=10)
+    run = solve_flow_transient(p, scheme="theta", dt=0.1, t_end=3.0, theta=1.0, store_every=10)
     assert np.allclose(run.final.u, inflow(p.mesh.x, p.mesh.y), atol=1e-3)
     assert len(run.snapshots) == 4 and max(run.info["newton_iterations"]) <= 8
 
@@ -121,7 +121,7 @@ def test_taylor_green_vortex_decay():
         prob = FlowProblem(mesh, mu=nu, rho=1.0, bc={s: (ue, ve) for s in SIDES},
                            pin_value=lambda x, y: pe(x, y, 0.2))
         assert prob.depends_on_time()
-        run = solve_flow_transient(prob, dt=0.02, t_end=0.2, theta=0.5,
+        run = solve_flow_transient(prob, scheme="theta", dt=0.02, t_end=0.2, theta=0.5,
                                    U0=lambda x, y: (ue(x, y, 0.0), ve(x, y, 0.0)))
         sol = run.final
         m = sol.mesh
@@ -137,7 +137,7 @@ def test_taylor_green_vortex_decay():
 def test_series_output_and_validation(tmp_path):
     pytest.importorskip("meshio")
     p, _ = poiseuille("quad9", 2)
-    run = solve_flow_transient(p, dt=0.5, t_end=1.0, theta=1.0)
+    run = solve_flow_transient(p, scheme="theta", dt=0.5, t_end=1.0, theta=1.0)
     pvd = run.save_series(tmp_path / "flow")
     assert pvd.exists() and (tmp_path / "flow_0002.vtu").exists()
     run.final.save(tmp_path / "final.vtu")
@@ -150,7 +150,7 @@ def test_series_output_and_validation(tmp_path):
     with pytest.raises(ValueError, match="ux, uy"):
         FlowProblem(geometry(1.0, 1.0, 2, "quad9"), bc={"top": 1.0}).validate()
     with pytest.raises(ValueError):
-        solve_flow_transient(p, dt=0.3, t_end=1.0)
+        solve_flow_transient(p, scheme="theta", dt=0.3, t_end=1.0)
 
 
 def test_space_layout():
@@ -197,7 +197,7 @@ def test_airfoil_impulsive_start_short():
     assert set(prob.mesh.tags) == {"inlet", "outlet", "farfield", "airfoil"}
     assert not prob.pins_pressure
     history = []
-    run = solve_flow_transient(prob, dt=0.05, t_end=0.1, theta=0.5, startup_steps=2,
+    run = solve_flow_transient(prob, scheme="theta", dt=0.05, t_end=0.1, theta=0.5, startup_steps=2,
                                U0=lambda x, y: (1.0, 0.0), rtol=1e-6,
                                callback=lambda n, t, sol: history.append(airfoil.coefficients(sol)))
     assert len(history) == 2 and run.info["startup_steps"] == 2
