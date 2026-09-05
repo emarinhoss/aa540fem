@@ -19,6 +19,14 @@ files.
 from .boundary import dirichlet, neumann
 from .element import ElementMatrices, elem_eqn, elem_operators, jacobian, supg_tau
 from .elements import ELEMENTS, ReferenceElement, get_element
+from .flow import (
+    FlowProblem,
+    FlowSolution,
+    TaylorHoodSpace,
+    TransientFlowSolution,
+    solve_flow,
+    solve_flow_transient,
+)
 from .geometry import Mesh, geometry
 from .nonlinear import NewtonResult, newton_iterate, solve_nonlinear
 from .postprocess import CellField, element_gradient, error_norms
@@ -64,4 +72,6 @@ __all__ = [
     "assemble", "assemble_operators", "solve",
     "TransientSolution", "solve_transient",
     "NewtonResult", "newton_iterate", "solve_nonlinear",
+    "FlowProblem", "FlowSolution", "TaylorHoodSpace", "TransientFlowSolution",
+    "solve_flow", "solve_flow_transient",
 ]

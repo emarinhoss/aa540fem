@@ -1,8 +1,8 @@
 # Python port of the AA 540 anisotropic heat conduction FEM code
 
 This directory is a NumPy/SciPy port of the MATLAB code in `../project`,
-extended into a small but general 2-D finite element framework for the
-scalar transport equation
+extended into a small but general 2-D finite element framework.  It solves
+the scalar transport equation
 
     rho_c dT/dt + u . grad T - div( kappa(x, y) . grad T ) = f(x, y)
 
@@ -15,6 +15,13 @@ conditions by name.  Elements are 3- and 6-node triangles or 4- and 9-node
 quadrilaterals, on the built-in structured rectangle or on any mesh read
 through meshio (Gmsh `.msh` files in particular).  Time integration uses
 the theta-method (backward Euler or Crank-Nicolson).
+
+It also solves the incompressible Navier-Stokes equations
+
+    rho ( du/dt + (u . grad) u ) - mu lap(u) + grad p = rho f,   div u = 0
+
+with Taylor-Hood elements (quadratic velocity, linear pressure) and
+Newton's method; see "Incompressible flow" below.
 
 ## Installation
 
@@ -39,6 +46,8 @@ python examples/annulus.py              # curved annulus mesh, exact solution ln
 python examples/convection_diffusion.py # Galerkin vs SUPG on a boundary layer
 python examples/rotating_hill.py        # transient advection, writes a ParaView series
 python examples/nonlinear_conduction.py # kappa(T) = 1 + beta T, Newton vs Picard
+python examples/cavity.py               # lid-driven cavity vs Ghia et al.
+python examples/cylinder.py             # flow past a cylinder, Schaefer-Turek drag/lift
 python scripts/convergence.py           # mesh-convergence study, prints observed orders
 python scripts/convergence.py --transient   # temporal orders of backward Euler / Crank-Nicolson
 python -m pytest                        # verification suite
@@ -140,6 +149,42 @@ Tag the boundary curves with `Physical Curve("name")` (see
 (`Mesh.ElementOrder = 2`).  Elements with negative Jacobians are flipped on
 read and unused nodes are dropped.
 
+### Incompressible flow
+
+```python
+from aa540fem import geometry, read_mesh
+from aa540fem.flow import FlowProblem, solve_flow, solve_flow_transient
+
+# Lid-driven cavity, Re = 100 (mu = 1/Re, rho = 1, lid speed 1)
+mesh = geometry(1, 1, 32, "quad9")           # Q2 velocity, Q1 pressure on the corners
+walls = {s: (0.0, 0.0) for s in ("left", "right", "bottom")}
+cavity = FlowProblem(mesh, mu=0.01, rho=1.0, bc={**walls, "top": (1.0, 0.0)})
+sol = solve_flow(cavity)                      # Newton from the Stokes solution
+sol.u, sol.v, sol.p_nodal, sol.speed          # nodal fields
+sol.save("cavity.vtu")                        # velocity vector + pressure for ParaView
+
+# Channel with a body: Gmsh mesh with tags inlet / outlet / walls / cylinder
+mesh = read_mesh("examples/cylinder_tri6.msh")   # P2/P1 triangles
+flow = FlowProblem(mesh, mu=1e-3, rho=1.0,
+                   bc={"inlet": (lambda x, y: 4 * 0.3 * y * (0.41 - y) / 0.41**2, 0.0),
+                       "walls": (0.0, 0.0), "cylinder": (0.0, 0.0), "outlet": "open"})
+sol = solve_flow(flow)
+fx, fy = sol.forces("cylinder")               # traction integral of -p I + mu (grad u + grad u^T)
+
+# Time dependent (theta = 0.5 Crank-Nicolson), Dirichlet values may take t
+run = solve_flow_transient(flow, dt=0.01, t_end=1.0, theta=0.5, store_every=10)
+run.final.speed
+run.save_series("out/flow")                   # .vtu per step + .pvd
+```
+
+Boundary values are `(ux, uy)` pairs (constants, callables of `(x, y[, t])`,
+or `None` for a free component, e.g. `(None, 0.0)` on a symmetry line) or
+`"open"` for the do-nothing outflow `mu du/dn - p n = 0`.  When no boundary
+is open the pressure is pinned at one node (`pin_value`).  The Jacobian is
+an indefinite saddle-point matrix, so the direct solver is used; a
+continuation in Reynolds number is done by passing a previous `sol.U` as
+`U0` (see `examples/cavity.py`).
+
 ## Layout
 
 | Module                              | Contents                                              | MATLAB origin |
@@ -154,6 +199,7 @@ read and unused nodes are dropped.
 | `aa540fem/solver.py`                | `Problem`, operator assembly, direct / CG / GMRES     | `main.m`      |
 | `aa540fem/transient.py`             | theta-method time stepping, ParaView series output    | (new)         |
 | `aa540fem/nonlinear.py`             | damped Newton / Picard iteration                      | (new)         |
+| `aa540fem/flow.py`                  | Navier-Stokes: Taylor-Hood space, Newton, theta-method, forces | (new) |
 | `aa540fem/util.py`                  | `t` / `T` argument matching for user callables        | (new)         |
 | `aa540fem/postprocess.py`           | Centroid gradients and fluxes, L2/H1 error norms      | (new)         |
 | `aa540fem/conductivity_and_forcing.py` | User material and source                           | `conductivity_and_forcing.m` |
@@ -173,7 +219,21 @@ convection and time-dependent Dirichlet data, and nonlinear cases: the
 Kirchhoff problem `kappa = 1 + T` against its exact solution (Newton
 converging quadratically in a handful of iterations, Picard needing more),
 manufactured solutions with `kappa = 1 + T^2` and a `T^3` source, with
-convection, and in time.
+convection, and in time.  For the flow solver: Poiseuille flow reproduced to
+machine precision (velocity, pressure, wall forces, on quads and
+triangles), the Kovasznay solution at Re = 40 converging at order 3 in
+velocity and 2 in pressure, the lid-driven cavity at Re = 100 against Ghia,
+Ghia & Shin, the decaying Taylor-Green vortex in time, and the
+Schaefer-Turek cylinder benchmark at Re = 20:
+
+| quantity | computed | reference |
+|----------|----------|-----------|
+| C_D      | 5.5791   | 5.5795    |
+| dp       | 0.11748  | 0.11752   |
+| C_L      | 0.0067   | 0.0106    |
+
+(lift is two orders of magnitude smaller than drag and needs a finer mesh
+around the cylinder to converge).
 `scripts/convergence.py` on the manufactured solution
 `T = sin(pi x/a) sin(pi y/b)` gives the expected orders:
 
@@ -217,18 +277,21 @@ problems found while translating it:
   share a node the last listed tag wins consistently (the MATLAB code mixed
   both values at corners).
 * The global system is a SciPy sparse matrix and can be solved iteratively.
-* **Convection, time and nonlinear conductivity** are new: the MATLAB code
-  was steady linear diffusion only.
+* **Convection, time, nonlinear conductivity and Navier-Stokes** are new:
+  the MATLAB code was steady linear diffusion only.
 
 ## Roadmap toward flow simulation
 
 Done: the infrastructure (elements, unstructured meshes, output, solvers,
-CI), transient conduction (mass matrix, theta-method), convection-diffusion
-with SUPG stabilisation (the scalar prototype of a flow solver) and
-nonlinear coefficients with Newton's method (the prototype of the nonlinear
-solve every flow solver needs).  Next: incompressible Navier-Stokes
-(Taylor-Hood or PSPG, Newton on the convective term), then compressible
-flow, where a finite-volume or discontinuous Galerkin discretisation
-replaces continuous Galerkin.  Aircraft-scale RANS cases are
-better run in an established solver such as SU2; this code is the place to
-understand what such a solver does.
+CI), transient conduction, convection-diffusion with SUPG, nonlinear
+coefficients with Newton's method, and incompressible Navier-Stokes with
+Taylor-Hood elements including body forces on a boundary (drag and lift).
+What the flow solver still lacks for aerodynamic work, roughly in order of
+usefulness: an airfoil example (a Gmsh mesh around a NACA profile with a
+far-field boundary works with the code as is), SUPG/PSPG stabilisation for
+higher Reynolds numbers on coarser meshes, an iterative saddle-point solver
+(block preconditioning) to go beyond ~10^5 unknowns, a turbulence model,
+and finally compressibility, where a finite-volume or discontinuous
+Galerkin discretisation replaces continuous Galerkin.  Aircraft-scale RANS
+cases are better run in an established solver such as SU2; this code is
+the place to understand what such a solver does.

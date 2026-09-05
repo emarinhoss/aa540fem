@@ -37,6 +37,7 @@ class ReferenceElement:
     face_type  : cell type of an edge, ``"line"`` or ``"line3"``.
     reverse    : node permutation that flips the element orientation.
     centroid   : natural coordinates of the element centroid.
+    nodes      : natural coordinates of the nodes.
     legacy_id  : MATLAB element number, if any.
     """
 
@@ -49,6 +50,7 @@ class ReferenceElement:
     face_type: str
     reverse: tuple
     centroid: tuple
+    nodes: tuple
     shape_fn: Callable = field(repr=False, compare=False)
     legacy_id: int | None = None
 
@@ -81,6 +83,7 @@ TRIANGLE = ReferenceElement(
     name="triangle", family="triangle", n_nodes=3, min_order=1, full_order=3,
     faces=((0, 1), (1, 2), (2, 0)), face_type="line",
     reverse=(0, 2, 1), centroid=(_third, _third),
+    nodes=((0, 0), (1, 0), (0, 1)),
     shape_fn=interpfunc_3, legacy_id=1,
 )
 
@@ -88,6 +91,7 @@ TRIANGLE6 = ReferenceElement(
     name="triangle6", family="triangle", n_nodes=6, min_order=3, full_order=6,
     faces=((0, 1, 3), (1, 2, 4), (2, 0, 5)), face_type="line3",
     reverse=(0, 2, 1, 5, 4, 3), centroid=(_third, _third),
+    nodes=((0, 0), (1, 0), (0, 1), (0.5, 0), (0.5, 0.5), (0, 0.5)),
     shape_fn=interpfunc_6,
 )
 
@@ -95,6 +99,7 @@ QUAD = ReferenceElement(
     name="quad", family="quad", n_nodes=4, min_order=2, full_order=2,
     faces=((0, 1), (1, 2), (2, 3), (3, 0)), face_type="line",
     reverse=(0, 3, 2, 1), centroid=(0.0, 0.0),
+    nodes=((-1, -1), (1, -1), (1, 1), (-1, 1)),
     shape_fn=interpfunc_4, legacy_id=2,
 )
 
@@ -102,10 +107,15 @@ QUAD9 = ReferenceElement(
     name="quad9", family="quad", n_nodes=9, min_order=3, full_order=3,
     faces=((0, 1, 4), (1, 2, 5), (2, 3, 6), (3, 0, 7)), face_type="line3",
     reverse=(0, 3, 2, 1, 7, 6, 5, 4, 8), centroid=(0.0, 0.0),
+    nodes=((-1, -1), (1, -1), (1, 1), (-1, 1), (0, -1), (1, 0), (0, 1), (-1, 0), (0, 0)),
     shape_fn=interpfunc_9, legacy_id=3,
 )
 
 ELEMENTS = {e.name: e for e in (TRIANGLE, TRIANGLE6, QUAD, QUAD9)}
+
+# Taylor-Hood pairs: quadratic velocity element -> linear pressure element on
+# its corner nodes (the first n_corners local nodes).
+PRESSURE_ELEMENT = {"triangle6": TRIANGLE, "quad9": QUAD}
 LEGACY_ELEMENTS = {e.legacy_id: e for e in ELEMENTS.values() if e.legacy_id is not None}
 FACE_ELEMENTS = {"line": 2, "line3": 3}
 

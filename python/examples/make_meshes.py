@@ -1,8 +1,9 @@
-"""Generate the annulus meshes used by the tests and examples with Gmsh.
+"""Generate the meshes used by the tests and examples with Gmsh.
 
-Requires the ``gmsh`` Python package (``pip install gmsh``).  Writes
-``annulus_tri.msh``, ``annulus_tri6.msh``, ``annulus_quad.msh`` and
-``annulus_quad9.msh`` next to this file.
+Requires the ``gmsh`` Python package (``pip install gmsh``).  Writes the
+annulus meshes ``annulus_tri.msh``, ``annulus_tri6.msh``, ``annulus_quad.msh``,
+``annulus_quad9.msh`` and the cylinder-in-channel mesh ``cylinder_tri6.msh``
+next to this file.
 """
 
 from __future__ import annotations
@@ -14,11 +15,12 @@ import gmsh
 HERE = pathlib.Path(__file__).resolve().parent
 
 MESHES = {
-    # name: (element order, recombine into quads)
-    "annulus_tri": (1, False),
-    "annulus_tri6": (2, False),
-    "annulus_quad": (1, True),
-    "annulus_quad9": (2, True),
+    # name: (geometry file, element order, recombine into quads)
+    "annulus_tri": ("annulus.geo", 1, False),
+    "annulus_tri6": ("annulus.geo", 2, False),
+    "annulus_quad": ("annulus.geo", 1, True),
+    "annulus_quad9": ("annulus.geo", 2, True),
+    "cylinder_tri6": ("cylinder.geo", 2, False),
 }
 
 
@@ -43,5 +45,5 @@ def make(name: str, order: int, quads: bool, geo: pathlib.Path = HERE / "annulus
 
 
 if __name__ == "__main__":
-    for name, (order, quads) in MESHES.items():
-        print("wrote", make(name, order, quads))
+    for name, (geo, order, quads) in MESHES.items():
+        print("wrote", make(name, order, quads, HERE / geo))
