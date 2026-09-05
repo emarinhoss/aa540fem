@@ -1,6 +1,6 @@
 """Vortex shedding behind a cylinder: the Schaefer-Turek 2D-2 benchmark (Re = 100).
 
-    python examples/cylinder_shedding.py [--t-end 8] [--dt 0.005] [--scheme theta|rk45]
+    python examples/cylinder_shedding.py [--t-end 6] [--dt 0.01] [--scheme theta|rk45]
                                          [--outdir shedding_out] [--no-plot]
 
 Same channel and cylinder as ``cylinder.py`` on the boundary-layer mesh
@@ -35,7 +35,8 @@ REFERENCE = {"St": 0.2995, "C_D_max": 3.2298, "C_L_max": 1.0002}
 
 def problem(mesh, umax):
     inflow = lambda x, y: 4.0 * umax * y * (H - y) / H ** 2
-    return FlowProblem(mesh, mu=NU, rho=1.0, stabilisation=True,
+    # SUPG only: the grad-div term damps the shedding on this mesh
+    return FlowProblem(mesh, mu=NU, rho=1.0, stabilisation=True, grad_div=False,
                        bc={"inlet": (inflow, 0.0), "walls": (0.0, 0.0),
                            "cylinder": (0.0, 0.0), "outlet": "open"})
 
@@ -62,8 +63,8 @@ def strouhal(t, cl, umean=1.0, last_fraction=0.5):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--mesh", default=str(MESHES / "cylinder_bl.msh"))
-    parser.add_argument("--t-end", type=float, default=8.0)
-    parser.add_argument("--dt", type=float, default=0.005)
+    parser.add_argument("--t-end", type=float, default=6.0)
+    parser.add_argument("--dt", type=float, default=0.01)
     parser.add_argument("--scheme", default="theta", choices=["theta", "rk45"])
     parser.add_argument("--output-interval", type=float, default=0.5)
     parser.add_argument("--outdir", default="shedding_out")

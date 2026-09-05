@@ -10,18 +10,18 @@ from aa540fem.linalg.solvers import LinearSolver
 
 
 def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9, atol=1e-11,
-                     dtau0=0.01, max_steps=200, dtau_max=1e6, inner_newton=4,
-                     inner_rtol=1e-3, verbose=False) -> NewtonResult:
+                     dtau0=0.01, max_steps=200, dtau_max=1e6, inner_newton=6,
+                     inner_rtol=1e-2, verbose=False) -> NewtonResult:
     """Pseudo-transient continuation: ``R(U) + (M / dtau)(U - U_k) = 0``.
 
     Each pseudo-time step is a backward-Euler step solved with up to
-    ``inner_newton`` Newton iterations (to a relative tolerance
-    ``inner_rtol`` of the step's initial residual); ``dtau`` grows by
-    switched evolution relaxation ``dtau_{k+1} = dtau_k |R_k| / |R_{k+1}|``
-    (bounded by factors 0.5 and 10) on the steady residual, so the iteration
-    turns into plain Newton as the residual vanishes.  A step whose inner
-    iteration diverges (its own residual growing tenfold, or non-finite) is
-    retried with ``dtau / 4``.  ``M`` is the mass
+    ``inner_newton`` Newton iterations; it is accepted only when its own
+    residual has dropped to ``inner_rtol`` of its initial value (otherwise
+    the step is retried with ``dtau / 4``: an unconverged implicit step must
+    never be accepted, its error accumulates).  ``dtau`` grows by switched
+    evolution relaxation ``dtau_{k+1} = dtau_k |R_k| / |R_{k+1}|`` (bounded
+    by factors 0.5 and 10) on the steady residual, so the iteration turns
+    into plain Newton as the residual vanishes.  ``M`` is the mass
     matrix (zero pressure block), so the continuity equation is never
     relaxed.
     """
@@ -44,30 +44,31 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
     k = 0
     retries = 0
     while k < max_steps and r > target:
-        # backward-Euler step from U with Newton on G(V) = R(V) + M (V - U)/dtau
+        # backward-Euler step from U with Newton on G(V) = R(V) + M (V - U)/dtau;
+        # the step is accepted only if the inner iteration actually converged
         V, RV, JV = U, R, J
         step_res = None
-        g_prev = None
-        ok = True
-        for _ in range(inner_newton):
+        ok = False
+        for inner in range(inner_newton + 1):
             G = RV + M @ ((V - U) / dtau)
             G[fixed] = 0.0
             g = np.linalg.norm(G)
-            if not np.isfinite(g) or (g_prev is not None and g > 10.0 * g_prev):
-                ok = False                      # the inner iteration is diverging
+            if not np.isfinite(g):
                 break
-            g_prev = g
             if step_res is None:
                 step_res = g
             if g <= inner_rtol * step_res or g <= atol:
+                ok = True
                 break
+            if inner == inner_newton:
+                break                           # out of inner iterations: reject
             elim = DirichletEliminator((JV + M / dtau).tocsr(), fixed)
             delta, _ = LinearSolver(elim.K_bc, method, symmetric=False).solve(
                 elim.apply_rhs(-G, zero))
             V = V + delta
             RV, JV, rV = evaluate(V)
-        if ok and not np.isfinite(np.linalg.norm(RV)):
-            ok = False
+            if not np.isfinite(rV):
+                break
         if not ok:
             retries += 1
             dtau *= 0.25
