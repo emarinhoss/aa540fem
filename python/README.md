@@ -48,6 +48,7 @@ python examples/rotating_hill.py        # transient advection, writes a ParaView
 python examples/nonlinear_conduction.py # kappa(T) = 1 + beta T, Newton vs Picard
 python examples/cavity.py               # lid-driven cavity vs Ghia et al.
 python examples/cylinder.py             # flow past a cylinder, Schaefer-Turek drag/lift
+python examples/airfoil.py              # NACA 0012 at 5 deg: impulsive start, C_L / C_D history
 python scripts/convergence.py           # mesh-convergence study, prints observed orders
 python scripts/convergence.py --transient   # temporal orders of backward Euler / Crank-Nicolson
 python -m pytest                        # verification suite
@@ -172,10 +173,25 @@ sol = solve_flow(flow)
 fx, fy = sol.forces("cylinder")               # traction integral of -p I + mu (grad u + grad u^T)
 
 # Time dependent (theta = 0.5 Crank-Nicolson), Dirichlet values may take t
-run = solve_flow_transient(flow, dt=0.01, t_end=1.0, theta=0.5, store_every=10)
+run = solve_flow_transient(flow, dt=0.01, t_end=1.0, theta=0.5, store_every=10,
+                           startup_steps=4,                 # backward Euler first (impulsive start)
+                           callback=lambda n, t, sol: print(t, sol.forces("cylinder")))
 run.final.speed
 run.save_series("out/flow")                   # .vtu per step + .pvd
 ```
+
+The transient solver takes one Newton factorisation per step and reuses it
+while the iteration contracts well (modified Newton), refreshing it
+otherwise.
+
+`examples/airfoil.py` is the aerodynamic case: a NACA 0012 at 5 degrees
+angle of attack (the profile is rotated in the mesh so the freestream is
+along x), chord Reynolds number 1000, impulsively started and integrated at
+a fixed time step with fields written every `--store-every` steps and lift
+and drag coefficients logged every step to `forces.csv`, followed by a
+steady Newton solve from the final state.  `make_meshes.py` builds the
+far-field mesh with Gmsh (`naca4()` generates any 4-digit profile, and
+`make_airfoil(alpha_deg=...)` any angle of attack).
 
 Boundary values are `(ux, uy)` pairs (constants, callables of `(x, y[, t])`,
 or `None` for a free component, e.g. `(None, 0.0)` on a symmetry line) or
@@ -233,7 +249,11 @@ Schaefer-Turek cylinder benchmark at Re = 20:
 | C_L      | 0.0067   | 0.0106    |
 
 (lift is two orders of magnitude smaller than drag and needs a finer mesh
-around the cylinder to converge).
+around the cylinder to converge).  The airfoil case at Re = 1000 has no
+exact reference; published laminar results for the NACA 0012 at 5 degrees
+and Re = 1000 give C_L around 0.3 and C_D around 0.13 (Kurtulus 2015 and
+similar studies), which the example reproduces to within the accuracy one
+expects of its 15k-node mesh.
 `scripts/convergence.py` on the manufactured solution
 `T = sin(pi x/a) sin(pi y/b)` gives the expected orders:
 
@@ -287,9 +307,8 @@ CI), transient conduction, convection-diffusion with SUPG, nonlinear
 coefficients with Newton's method, and incompressible Navier-Stokes with
 Taylor-Hood elements including body forces on a boundary (drag and lift).
 What the flow solver still lacks for aerodynamic work, roughly in order of
-usefulness: an airfoil example (a Gmsh mesh around a NACA profile with a
-far-field boundary works with the code as is), SUPG/PSPG stabilisation for
-higher Reynolds numbers on coarser meshes, an iterative saddle-point solver
+usefulness: SUPG/PSPG stabilisation for higher Reynolds numbers on coarser
+meshes, an iterative saddle-point solver
 (block preconditioning) to go beyond ~10^5 unknowns, a turbulence model,
 and finally compressibility, where a finite-volume or discontinuous
 Galerkin discretisation replaces continuous Galerkin.  Aircraft-scale RANS

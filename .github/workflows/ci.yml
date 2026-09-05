@@ -35,3 +35,4 @@ jobs:
           python examples/nonlinear_conduction.py --no-plot
           python examples/cavity.py --no-plot --elems 16 --vtk ''
           python examples/cylinder.py --no-plot --vtk ''
+          python examples/airfoil.py --no-plot --no-steady --dt 0.05 --t-end 0.1 --store-every 1 --outdir /tmp/airfoil

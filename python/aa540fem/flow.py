@@ -501,13 +501,20 @@ class TransientFlowSolution:
 def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: float = 0.5,
                          U0=None, method: str = "direct", store_every: int = 1,
                          verbose: bool = False, rtol: float = 1e-8, atol: float = 1e-10,
-                         max_newton: int = 25, damping: bool = True) -> TransientFlowSolution:
+                         max_newton: int = 25, damping: bool = True, callback=None,
+                         startup_steps: int = 0,
+                         frozen_jacobian: bool = True) -> TransientFlowSolution:
     """Time integration with the theta-method and a Newton solve per step.
 
     Momentum: ``M (U - U_n)/dt + theta S(U) + (1 - theta) S(U_n) - B^T p = 0``
     with ``S(U) = K U + N(U) - F``; the pressure and the continuity equation
     are implicit.  ``U0`` may be a velocity/pressure vector or a callable
-    ``(x, y) -> (ux, uy)`` for the initial velocity.
+    ``(x, y) -> (ux, uy)`` for the initial velocity.  ``callback(step, t,
+    solution)`` is called after every step with a :class:`FlowSolution`
+    (e.g. to log forces).  ``startup_steps`` backward-Euler steps are taken
+    first (Rannacher start-up), which damps the Crank-Nicolson ringing after
+    an impulsive start.  With ``frozen_jacobian`` each step factorises its
+    Jacobian once and iterates with it (modified Newton).
     """
     if not 0.0 <= theta <= 1.0:
         raise ValueError("theta must be in [0, 1]")
@@ -546,23 +553,25 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
 
     for n in range(1, nsteps + 1):
         t = n * dt
+        th = 1.0 if n <= startup_steps else theta
         if time_dependent:
             fixed, vals = asm.dirichlet(t)
         F_new = asm.body_load(t) if time_dependent else F_old
         U_old = U
 
-        def residual_jacobian(Un, U_old=U_old, F_new=F_new, S_old=S_old):
+        def residual_jacobian(Un, U_old=U_old, F_new=F_new, S_old=S_old, th=th):
             N, dN = asm.convection(Un)
             S = asm.K @ Un + N - F_new
             S[2 * space.N:] = 0.0
-            R = M @ ((Un - U_old) / dt) + theta * S + (1 - theta) * S_old - B.T @ Un + B @ Un
-            J = (M / dt + theta * (asm.K + dN) - B.T + B).tocsr()
+            R = M @ ((Un - U_old) / dt) + th * S + (1 - th) * S_old - B.T @ Un + B @ Un
+            J = (M / dt + th * (asm.K + dN) - B.T + B).tocsr()
             return R, J
 
         guess = U_old.copy()
         guess[fixed] = vals
         res = newton_iterate(residual_jacobian, guess, fixed, method, rtol=rtol, atol=atol,
-                             max_newton=max_newton, damping=damping)
+                             max_newton=max_newton, damping=damping,
+                             frozen_jacobian=frozen_jacobian)
         if not res.converged:
             raise RuntimeError(f"Newton did not converge at t = {t:.6g} "
                                f"(|R| = {res.residuals[-1]:.2e})")
@@ -575,10 +584,13 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
         if n % store_every == 0 or n == nsteps:
             times.append(t)
             snapshots.append(U.copy())
+        if callback is not None:
+            callback(n, t, FlowSolution(problem, space, U, {"step": n, "t": t}, asm))
         if verbose and (n % max(1, nsteps // 10) == 0 or n == nsteps):
             u, v, _ = space.split(U)
             print(f"  step {n}/{nsteps}, t = {t:.6g}, max |u| = {np.hypot(u, v).max():.6g}, "
                   f"{res.iterations} Newton iterations")
 
-    info = {"steps": nsteps, "dt": dt, "theta": theta, "newton_iterations": newton_iterations}
+    info = {"steps": nsteps, "dt": dt, "theta": theta, "startup_steps": startup_steps,
+            "newton_iterations": newton_iterations}
     return TransientFlowSolution(problem, space, np.asarray(times), snapshots, info, asm)

@@ -53,7 +53,7 @@ def test_stokes_and_transient_reach_poiseuille():
     assert np.allclose(stokes.u, inflow(p.mesh.x, p.mesh.y), atol=1e-10)
     run = solve_flow_transient(p, dt=0.1, t_end=3.0, theta=1.0, store_every=10)
     assert np.allclose(run.final.u, inflow(p.mesh.x, p.mesh.y), atol=1e-3)
-    assert len(run.snapshots) == 4 and max(run.info["newton_iterations"]) <= 4
+    assert len(run.snapshots) == 4 and max(run.info["newton_iterations"]) <= 8
 
 
 # ---------------------------------------------------------------- Kovasznay
@@ -182,3 +182,26 @@ def test_cylinder_benchmark_drag_and_pressure_drop():
     assert abs(res["C_D"] - 5.5795) / 5.5795 < 0.01
     assert abs(res["dp"] - 0.1175) / 0.1175 < 0.01
     assert abs(res["C_L"]) < 0.02          # lift is tiny and mesh sensitive
+
+
+def test_airfoil_impulsive_start_short():
+    """Two steps of the NACA 0012 case: forces logged each step, start-up damping."""
+    pytest.importorskip("meshio")
+    import pathlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "examples"))
+    import airfoil
+
+    prob = airfoil.setup(airfoil.HERE / "airfoil_naca0012_a5_tri6.msh", re=1000.0)
+    assert set(prob.mesh.tags) == {"inlet", "outlet", "farfield", "airfoil"}
+    assert not prob.pins_pressure
+    history = []
+    run = solve_flow_transient(prob, dt=0.05, t_end=0.1, theta=0.5, startup_steps=2,
+                               U0=lambda x, y: (1.0, 0.0), rtol=1e-6,
+                               callback=lambda n, t, sol: history.append(airfoil.coefficients(sol)))
+    assert len(history) == 2 and run.info["startup_steps"] == 2
+    cl, cd = history[-1]
+    assert np.isfinite(cl) and np.isfinite(cd)
+    assert cl > 0 and cd > 0             # lift up, drag downstream from the very start
+    assert max(run.info["newton_iterations"]) <= 12

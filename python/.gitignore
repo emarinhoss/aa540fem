@@ -6,3 +6,6 @@ __pycache__/
 build/
 temperature.png
 *.vtu
+*.pvd
+airfoil_out/
+*.csv

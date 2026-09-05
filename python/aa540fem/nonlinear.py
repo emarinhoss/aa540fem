@@ -45,7 +45,8 @@ class NewtonResult:
 
 def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: float = 1e-10,
            maxiter=None, rtol: float = 1e-10, atol: float = 1e-12, max_newton: int = 25,
-           damping: bool = True, verbose: bool = False) -> NewtonResult:
+           damping: bool = True, verbose: bool = False,
+           frozen_jacobian: bool = False) -> NewtonResult:
     """Solve ``R(T) = 0`` with (damped) Newton iterations.
 
     Parameters
@@ -61,6 +62,13 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
     max_newton        : iteration limit.
     damping           : halve the update (up to 5 times) while the residual
                         does not decrease.
+    frozen_jacobian   : reuse the factorised Jacobian for the following
+                        iterations (modified Newton) as long as each one
+                        reduces the residual by at least a factor 3;
+                        otherwise it is refreshed.  The residual is always the
+                        true one, so the converged answer is unchanged; useful
+                        in time stepping where the Jacobian changes little
+                        per step.
     """
     T = np.array(T, dtype=float, copy=True)
     nodes = np.asarray(nodes, dtype=int)
@@ -77,13 +85,16 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
     if verbose:
         print(f"  Newton 0: |R| = {r:.3e}")
 
+    solver = None
     for it in range(1, max_newton + 1):
         if r <= target:
             result.converged = True
             break
-        elim = DirichletEliminator(J, nodes)
+        if solver is None or not frozen_jacobian:
+            elim = DirichletEliminator(J, nodes)
+            solver = LinearSolver(elim.K_bc, method, tol, maxiter, symmetric=False)
         rhs = elim.apply_rhs(-R, np.zeros(nodes.size))
-        delta, _ = LinearSolver(elim.K_bc, method, tol, maxiter, symmetric=False).solve(rhs)
+        delta, _ = solver.solve(rhs)
 
         alpha = 1.0
         for _ in range(6):
@@ -92,6 +103,8 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
             if not damping or rn < r or alpha < 1.0 / 16:
                 break
             alpha *= 0.5
+        if frozen_jacobian and rn > r / 3.0:
+            solver = None                       # poor contraction: refresh the Jacobian
         T, R, J, r = Tn, Rn, Jn, rn
         result.T = T
         result.residuals.append(r)
