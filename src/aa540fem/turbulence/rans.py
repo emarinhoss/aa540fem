@@ -44,7 +44,8 @@ class RANSSolution:
 
 def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                max_outer: int = 40, tol: float = 1e-3, relax: float = 0.7, verbose=False,
-               force_tag=None, U0=None, viscosity_ramp=(1.0,)) -> RANSSolution:
+               force_tag=None, U0=None, viscosity_ramp=(1.0,),
+               flow_options=None) -> RANSSolution:
     """Steady RANS solution with the Spalart-Allmaras model.
 
     Parameters
@@ -66,6 +67,12 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                   from the previous one, which is far more robust than
                   starting the wall-resolved high-Reynolds-number case from
                   rest.  The last factor must be 1.
+    U0          : initial state for the first flow solve (a dof vector or a
+                  callable ``(x, y) -> (ux, uy)``); a smooth boundary-layer
+                  profile is a much better start than uniform flow on
+                  wall-resolved meshes.
+    flow_options : extra keyword arguments for :func:`solve_flow`
+                  (e.g. ``dtau0`` of the pseudo-transient continuation).
     """
     wall_tags = [wall_tags] if isinstance(wall_tags, str) else list(wall_tags)
     if viscosity_ramp[-1] != 1.0:
@@ -80,16 +87,29 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                 print(f"RANS viscosity ramp: factor {factor:g}")
             result = _solve_rans(problem, wall_tags, nu_tilde_inf, None,
                                  max_outer if last else 6, tol if last else 10 * tol, relax,
-                                 verbose, force_tag, None if result is None else result.flow.U,
-                                 None if result is None else result.nu_tilde)
+                                 verbose, force_tag, U0 if result is None else result.flow.U,
+                                 None if result is None else result.nu_tilde, flow_options)
         problem.mu = mu_target
         return result
     return _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, verbose,
-                       force_tag, U0, None)
+                       force_tag, U0, None, flow_options)
+
+
+def _initial_vector(problem, U0):
+    if U0 is None or not callable(U0):
+        return U0
+    from aa540fem.incompressible.assembler import FlowAssembler
+    from aa540fem.incompressible.transient import _initial_state
+
+    asm = FlowAssembler(problem)
+    fixed, vals = asm.dirichlet()
+    return _initial_state(asm, U0, fixed, vals)
 
 
 def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, verbose,
-                force_tag, U0, nu_tilde0):
+                force_tag, U0, nu_tilde0, flow_options=None):
+    flow_options = dict(flow_options or {})
+    U0 = _initial_vector(problem, U0)
     mesh = problem.mesh
     nu = problem.mu / problem.rho
     model = model or SpalartAllmaras(nu)
@@ -111,7 +131,7 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
     nt[fixed_nodes] = fixed_vals
     nu_t = model.eddy_viscosity(nt)
     problem.eddy_viscosity = problem.rho * nu_t
-    flow = solve_flow(problem, U0=U0, continuation="auto", verbose=False)
+    flow = solve_flow(problem, U0=U0, continuation="auto", verbose=False, **flow_options)
     if verbose:
         print(f"RANS start: flow {flow.info['continuation']} in "
               f"{flow.info['iterations']} iterations")
@@ -127,7 +147,7 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
         change = np.linalg.norm(nu_t_new - nu_t) / max(np.linalg.norm(nu_t_new), 1e-300)
         nu_t = nu_t_new
         problem.eddy_viscosity = problem.rho * nu_t
-        flow = solve_flow(problem, U0=flow.U, continuation="auto", verbose=False)
+        flow = solve_flow(problem, U0=flow.U, continuation="auto", verbose=False, **flow_options)
         force = flow.forces(force_tag)
         history.append((k, change, force, res.iterations, res.converged, flow.info["iterations"]))
         if verbose:

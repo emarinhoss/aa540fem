@@ -58,7 +58,15 @@ def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=1.5, verbose=T
     prob = FlowProblem(mesh, mu=nu, rho=1.0, stabilisation=True,
                        bc={"inlet": (1.0, 0.0), "top": (1.0, 0.0), "symmetry": (None, 0.0),
                            "plate": (0.0, 0.0), "outlet": "open"})
-    rans = solve_rans(prob, wall_tags=["plate"], verbose=verbose, **kw)
+    # smooth initial profile (a boundary layer of thickness ~ 0.03 on the plate)
+    # instead of the impulsive start, which the wall-resolved mesh cannot absorb
+    def initial(x, y):
+        delta = 0.03 * np.sqrt(np.maximum(x, 0.0) / 2.0 + 0.05)
+        u = np.where(x > 0, 1.0 - np.exp(-y / delta), 1.0)
+        return u, np.zeros_like(y)
+
+    rans = solve_rans(prob, wall_tags=["plate"], verbose=verbose, U0=initial,
+                      flow_options={"dtau0": 1e-3}, **kw)
     flow = rans.flow
 
     tr = flow.wall_traction("plate")
