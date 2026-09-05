@@ -285,10 +285,16 @@ around the cylinder to converge).  The airfoil case at Re = 1000 has no
 exact reference; `examples/airfoil.py` on its 15k-node mesh (dt = 0.05,
 160 steps, 4 minutes) gives
 
-| NACA 0012, alpha = 5 deg, Re = 1000 | C_L    | C_D    |
-|-------------------------------------|--------|--------|
-| transient at t U / c = 8            | 0.2565 | 0.1289 |
-| steady Newton from that state       | 0.2481 | 0.1285 |
+| NACA 0012, alpha = 5 deg, Re = 1000 | C_L    | C_D    | steps | wall time |
+|-------------------------------------|--------|--------|-------|-----------|
+| RK45 (rtol 1e-4), t U / c = 8       | 0.2562 | 0.1289 | 3956 accepted, 203 rejected, dt 1e-4 to 3e-3 | 11.5 min |
+| theta (Crank-Nicolson, dt = 0.05)   | 0.2565 | 0.1289 | 160 | 4 min |
+| steady Newton from the final state  | 0.2481 | 0.1285 | 4 Newton iterations | 5 s |
+
+The two time integrators agree to three decimals along the whole history;
+the explicit scheme needs about 25 times more steps (its step is set by
+the viscous stability limit of the smallest cells at the leading edge) but
+each step is cheap (no Newton, one factorisation for the whole run).
 
 Published laminar computations for this case (e.g. Kurtulus 2015) report
 C_L of roughly 0.25-0.3 and C_D of roughly 0.13; the slow drift of C_L
