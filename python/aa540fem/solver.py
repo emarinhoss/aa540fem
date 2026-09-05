@@ -13,9 +13,8 @@ import scipy.sparse.linalg as spla
 
 from .boundary import dirichlet, neumann
 from .element import elem_eqn
-from .geometry import SIDES, Mesh, geometry
-from .quadrature import MIN_ORDER, default_order, quadrature_rule
-from .shape_functions import interpfunc
+from .elements import get_element
+from .geometry import Mesh, geometry
 
 DIRICHLET = 0
 NEUMANN = 1
@@ -27,20 +26,24 @@ class Problem:
 
     Attributes
     ----------
-    a, b      : domain size in x and y.
-    elems     : number of cells along each direction (equal in x and y).
-    elem_type : 1 --> 3-node linear, 2 --> 4-node linear, 3 --> 9-node quadratic.
-    bc_type   : dict side -> 0 (Dirichlet) or 1 (Neumann) for
-                ``"top"``, ``"right"``, ``"left"``, ``"bottom"``.
-    bc_val    : dict side -> value (constant or callable ``val(x, y)``):
-                the temperature for Dirichlet sides, the normal flux
-                ``n . (kappa grad T)`` for Neumann sides.
+    a, b      : domain size in x and y (structured rectangle only).
+    elems     : number of cells along each direction (structured only).
+    elem_type : 1 --> 3-node linear, 2 --> 4-node linear, 3 --> 9-node
+                quadratic; element names (``"triangle6"`` ...) also work.
+    mesh      : an explicit :class:`Mesh` (e.g. from
+                :func:`aa540fem.mesh_io.read_mesh`).  When given, ``a``,
+                ``b``, ``elems`` and ``elem_type`` are ignored.
+    bc_type   : dict boundary tag -> 0 (Dirichlet) or 1 (Neumann).  Tags of
+                the mesh that are not listed get the natural (zero-flux)
+                condition.
+    bc_val    : dict boundary tag -> value (constant or callable ``val(x, y)``):
+                the temperature for Dirichlet tags, the normal flux
+                ``n . (kappa grad T)`` for Neumann tags.
     order     : quadrature order.  Triangles: 1, 3, 4, 6, 7, 9, 12, 13
                 (Gauss points on the triangle); quadrilaterals: number of
                 Gauss-Legendre points per direction.  ``None`` selects the
-                lowest order that fully integrates the element (1, 2 and 3
-                for element types 1, 2 and 3); a lower order gives a
-                rank-deficient, usually singular, system.
+                lowest order that fully integrates each element type; a
+                lower order gives a rank-deficient, usually singular, system.
     material  : optional callable ``(x, y) -> (kxx, kxy, kyx, kyy, f)``
                 overriding ``conductivity_and_forcing``.
     """
@@ -48,13 +51,19 @@ class Problem:
     a: float = 4.0
     b: float = 6.0
     elems: int = 50
-    elem_type: int = 3
+    elem_type: object = 3
+    mesh: Mesh | None = None
     bc_type: dict = field(default_factory=lambda: {
         "top": DIRICHLET, "right": NEUMANN, "left": NEUMANN, "bottom": DIRICHLET})
     bc_val: dict = field(default_factory=lambda: {
         "top": 100.0, "right": 0.0, "left": 0.0, "bottom": 0.0})
     order: int | None = None
     material: object = None
+
+    def build_mesh(self) -> Mesh:
+        if self.mesh is not None:
+            return self.mesh
+        return geometry(self.a, self.b, self.elems, self.elem_type)
 
 
 @dataclass
@@ -63,39 +72,63 @@ class Solution:
     T: np.ndarray                # nodal temperatures, flat
     K: sp.csr_matrix             # stiffness matrix after boundary conditions
     F: np.ndarray                # load vector after boundary conditions
+    material: object = None      # material used (None = default module)
+    info: dict = field(default_factory=dict)   # solver statistics
 
     @property
     def grid(self) -> np.ndarray:
         """Temperatures on the ``(ny, nx)`` grid of ``mesh.X``/``mesh.Y``."""
         return self.mesh.to_grid(self.T)
 
+    def flux(self):
+        """Element-centroid gradient and flux, see :func:`aa540fem.postprocess.element_gradient`."""
+        from .postprocess import element_gradient
+
+        return element_gradient(self.mesh, self.T, self.material)
+
+    def save(self, path, cell_fields: bool = True):
+        """Write the solution to a ParaView file (``.vtu``, ``.vtk``, ...)."""
+        from .mesh_io import write_vtk
+
+        cell_data = None
+        if cell_fields:
+            cf = self.flux()
+            cell_data = {"gradT": cf.grad, "flux": cf.flux}
+        return write_vtk(path, self.mesh, point_data={"T": self.T}, cell_data=cell_data)
+
 
 def assemble(mesh: Mesh, order: int | None = None, material=None, verbose: bool = False):
     """Assemble the global stiffness matrix ``K`` (CSR) and load vector ``F``.
 
-    ``order=None`` uses :func:`aa540fem.quadrature.default_order`.
+    Every cell block of the mesh is integrated with its own element; ``order``
+    applies to all blocks and ``None`` uses each element's ``min_order``.
     """
-    if order is None:
-        order = default_order(mesh.elem_type)
-    elif order < MIN_ORDER[mesh.elem_type]:
-        warnings.warn(
-            f"quadrature order {order} under-integrates element type {mesh.elem_type} "
-            f"(minimum {MIN_ORDER[mesh.elem_type]}); the system may be singular",
-            stacklevel=2)
-    xi, eta, w = quadrature_rule(mesh.elem_type, order)
-    phi, dphi_dxi, dphi_deta = interpfunc(mesh.elem_type, xi, eta)
-
-    xe = mesh.x[mesh.conn]
-    ye = mesh.y[mesh.conn]
-    Ke, fe = elem_eqn(xe, ye, phi, dphi_dxi, dphi_deta, w, material=material)
-
-    n = mesh.nodes_per_element
-    rows = np.repeat(mesh.conn, n, axis=1).ravel()   # conn[e, i] for each j
-    cols = np.tile(mesh.conn, (1, n)).ravel()        # conn[e, j] for each i
     N = mesh.n_nodes
-    K = sp.coo_matrix((Ke.ravel(), (rows, cols)), shape=(N, N)).tocsr()
+    rows, cols, vals = [], [], []
     F = np.zeros(N)
-    np.add.at(F, mesh.conn.ravel(), fe.ravel())
+
+    for name, conn in mesh.cells.items():
+        el = get_element(name)
+        o = el.min_order if order is None else order
+        if o < el.min_order:
+            warnings.warn(
+                f"quadrature order {o} under-integrates {el.name} elements "
+                f"(minimum {el.min_order}); the system may be singular",
+                stacklevel=2)
+        xi, eta, w = el.quadrature(o)
+        phi, dphi_dxi, dphi_deta = el.shape(xi, eta)
+
+        Ke, fe = elem_eqn(mesh.x[conn], mesh.y[conn], phi, dphi_dxi, dphi_deta, w,
+                          material=material)
+
+        n = el.n_nodes
+        rows.append(np.repeat(conn, n, axis=1).ravel())   # conn[e, i] for each j
+        cols.append(np.tile(conn, (1, n)).ravel())        # conn[e, j] for each i
+        vals.append(Ke.ravel())
+        np.add.at(F, conn.ravel(), fe.ravel())
+
+    K = sp.coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
+                      shape=(N, N)).tocsr()
 
     if verbose:
         print("Finished Assembling Global Stiffness Matrix.")
@@ -103,33 +136,85 @@ def assemble(mesh: Mesh, order: int | None = None, material=None, verbose: bool 
 
 
 def apply_boundary_conditions(mesh: Mesh, K, F, bc_type: dict, bc_val: dict, verbose=False):
-    """Apply Neumann fluxes first, then Dirichlet values (which win at corners)."""
-    for side in SIDES:
-        if bc_type[side] == NEUMANN:
-            F = neumann(F, mesh.bc_edges[side], bc_val[side], mesh.x, mesh.y)
-    for side in SIDES:
-        if bc_type[side] == DIRICHLET:
-            K, F = dirichlet(K, F, mesh.bc_nodes[side], bc_val[side], mesh.x, mesh.y)
-        elif bc_type[side] != NEUMANN:
-            raise ValueError(f"Unknown boundary condition type {bc_type[side]!r} on {side}")
+    """Apply Neumann fluxes first, then Dirichlet values (which win at corners).
+
+    Tags in ``bc_type`` must exist in ``mesh.boundary``; mesh tags that are
+    not mentioned are left natural (zero flux).
+    """
+    unknown = [t for t in bc_type if t not in mesh.boundary]
+    if unknown:
+        raise ValueError(f"Unknown boundary tag(s) {unknown}; mesh has {mesh.tags}")
+    for tag, kind in bc_type.items():
+        if kind not in (DIRICHLET, NEUMANN):
+            raise ValueError(f"Unknown boundary condition type {kind!r} on {tag!r}")
+        if tag not in bc_val:
+            raise ValueError(f"No boundary value given for tag {tag!r}")
+
+    for tag, kind in bc_type.items():
+        if kind == NEUMANN:
+            F = neumann(F, mesh.boundary[tag], bc_val[tag], mesh.x, mesh.y)
+    for tag, kind in bc_type.items():
+        if kind == DIRICHLET:
+            K, F = dirichlet(K, F, mesh.bc_nodes[tag], bc_val[tag], mesh.x, mesh.y)
     if verbose:
         print("Boundary Conditions Applied.")
     return K, F
 
 
-def solve(problem: Problem, verbose: bool = False) -> Solution:
-    """Mesh, assemble, apply boundary conditions and solve for the temperatures."""
-    mesh = geometry(problem.a, problem.b, problem.elems, problem.elem_type)
+def _solve_cg(K, F, tol, maxiter, verbose):
+    """Conjugate gradients, AMG-preconditioned when pyamg is available."""
+    K = K.tocsr()
+    try:
+        import pyamg
+
+        ml = pyamg.smoothed_aggregation_solver(K)
+        M = ml.aspreconditioner(cycle="V")
+        precond = "pyamg smoothed aggregation"
+    except ImportError:
+        d = K.diagonal()
+        M = spla.LinearOperator(K.shape, matvec=lambda r: r / d)
+        precond = "Jacobi"
+
+    count = [0]
+
+    def callback(_):
+        count[0] += 1
+
+    T, flag = spla.cg(K, F, M=M, rtol=tol, maxiter=maxiter, callback=callback)
+    residual = np.linalg.norm(F - K @ T) / max(np.linalg.norm(F), 1e-300)
+    if flag != 0:
+        warnings.warn(f"CG did not converge in {count[0]} iterations (relative residual "
+                      f"{residual:.2e})", stacklevel=3)
     if verbose:
-        print("Finished generating Grid.")
+        print(f"CG ({precond}): {count[0]} iterations, relative residual {residual:.2e}")
+    return T, {"method": "cg", "preconditioner": precond, "iterations": count[0],
+               "residual": residual, "converged": flag == 0}
+
+
+def solve(problem: Problem, verbose: bool = False, method: str = "direct",
+          tol: float = 1e-10, maxiter: int | None = None) -> Solution:
+    """Mesh, assemble, apply boundary conditions and solve for the temperatures.
+
+    ``method`` is ``"direct"`` (sparse LU) or ``"cg"`` (conjugate gradients with
+    algebraic multigrid preconditioning when pyamg is installed).
+    """
+    mesh = problem.build_mesh()
+    if verbose:
+        print(f"Finished generating Grid: {mesh.n_nodes} nodes, {mesh.n_elems} elements.")
 
     K, F = assemble(mesh, problem.order, problem.material, verbose)
     K, F = apply_boundary_conditions(mesh, K, F, problem.bc_type, problem.bc_val, verbose)
 
-    if all(t == NEUMANN for t in problem.bc_type.values()):
-        raise ValueError("A pure Neumann problem is singular; fix T on at least one side")
+    if not any(t == DIRICHLET for t in problem.bc_type.values()):
+        raise ValueError("A pure Neumann problem is singular; fix T on at least one boundary")
 
     if verbose:
         print("Solving Equations ...")
-    T = spla.spsolve(K.tocsc(), F)
-    return Solution(mesh, T, K, F)
+    if method == "direct":
+        T = spla.spsolve(K.tocsc(), F)
+        info = {"method": "direct"}
+    elif method == "cg":
+        T, info = _solve_cg(K, F, tol, maxiter, verbose)
+    else:
+        raise ValueError(f"Unknown method {method!r}; expected 'direct' or 'cg'")
+    return Solution(mesh, T, K, F, problem.material, info)

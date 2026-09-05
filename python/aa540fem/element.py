@@ -12,6 +12,39 @@ import numpy as np
 from .conductivity_and_forcing import conductivity_and_forcing as _default_material
 
 
+def jacobian(x, y, dphi_dxi, dphi_deta):
+    """Isoparametric map derivatives at the quadrature points.
+
+    ``x, y`` are ``(n_elems, n)`` nodal coordinates and ``dphi_*`` are
+    ``(nq, n)``.  Returns ``(hs, dxi_dx, dxi_dy, deta_dx, deta_dy)``, each
+    ``(n_elems, nq)``: the Jacobian determinant and the inverse Jacobian.
+    """
+    dx_dxi = x @ dphi_dxi.T
+    dx_deta = x @ dphi_deta.T
+    dy_dxi = y @ dphi_dxi.T
+    dy_deta = y @ dphi_deta.T
+
+    hs = dx_dxi * dy_deta - dx_deta * dy_dxi
+
+    dxi_dx = dy_deta / hs
+    dxi_dy = -dx_deta / hs
+    deta_dx = -dy_dxi / hs
+    deta_dy = dx_dxi / hs
+    return hs, dxi_dx, dxi_dy, deta_dx, deta_dy
+
+
+def physical_gradients(x, y, dphi_dxi, dphi_deta):
+    """Shape-function gradients in physical coordinates.
+
+    Returns ``(hs, dphi_dx, dphi_dy)`` with ``hs`` of shape ``(n_elems, nq)``
+    and the gradients ``(n_elems, nq, n)``.
+    """
+    hs, dxi_dx, dxi_dy, deta_dx, deta_dy = jacobian(x, y, dphi_dxi, dphi_deta)
+    dphi_dx = dxi_dx[:, :, None] * dphi_dxi[None] + deta_dx[:, :, None] * dphi_deta[None]
+    dphi_dy = dxi_dy[:, :, None] * dphi_dxi[None] + deta_dy[:, :, None] * dphi_deta[None]
+    return hs, dphi_dx, dphi_dy
+
+
 def elem_eqn(x, y, phi, dphi_dxi, dphi_deta, w, material=None):
     """Compute element stiffness matrices ``Ke`` and load vectors ``fe``.
 
@@ -45,30 +78,15 @@ def elem_eqn(x, y, phi, dphi_dxi, dphi_deta, w, material=None):
     dphi_deta = np.atleast_2d(dphi_deta)
     w = np.atleast_1d(np.asarray(w, dtype=float))
 
-    # Physical coordinates and Jacobian at each quadrature point: (n_elems, nq)
+    # Physical coordinates of the quadrature points: (n_elems, nq)
     X = x @ phi.T
     Y = y @ phi.T
-    dx_dxi = x @ dphi_dxi.T
-    dx_deta = x @ dphi_deta.T
-    dy_dxi = y @ dphi_dxi.T
-    dy_deta = y @ dphi_deta.T
 
-    # Determinant of the Jacobian
-    hs = dx_dxi * dy_deta - dx_deta * dy_dxi
-
-    # Inverse Jacobian
-    dxi_dx = dy_deta / hs
-    dxi_dy = -dx_deta / hs
-    deta_dx = -dy_dxi / hs
-    deta_dy = dx_dxi / hs
+    hs, dphi_dx, dphi_dy = physical_gradients(x, y, dphi_dxi, dphi_deta)
 
     # Conductivity tensor and source at the quadrature points
     k11, k12, k21, k22, f = (np.broadcast_to(np.asarray(v, dtype=float), X.shape)
                              for v in material(X, Y))
-
-    # Shape-function gradients in physical coordinates: (n_elems, nq, n)
-    dphi_dx = dxi_dx[:, :, None] * dphi_dxi[None] + deta_dx[:, :, None] * dphi_deta[None]
-    dphi_dy = dxi_dy[:, :, None] * dphi_dxi[None] + deta_dy[:, :, None] * dphi_deta[None]
 
     wh = w[None, :] * hs                 # (n_elems, nq)
 

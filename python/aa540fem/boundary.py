@@ -66,8 +66,9 @@ def neumann(F, edges, val, x, y, order=3):
     Parameters
     ----------
     F     : ``(N,)`` load vector (modified copy is returned).
-    edges : ``(n_edges, m)`` node indices of each edge, ordered along the
-            edge; ``m == 2`` (linear) or ``m == 3`` (quadratic).
+    edges : ``(n_edges, m)`` node indices of each edge in Gmsh order
+            ``(start, end)`` for ``m == 2`` or ``(start, end, mid)`` for
+            ``m == 3``.
     val   : constant flux, or callable ``val(x, y)``.
     x, y  : nodal coordinate arrays.
     order : number of 1-D Gauss points per edge.
@@ -83,8 +84,9 @@ def neumann(F, edges, val, x, y, order=3):
         phi = np.column_stack([0.5 * (1 - s), 0.5 * (1 + s)])
         dphi = np.column_stack([-0.5 * np.ones_like(s), 0.5 * np.ones_like(s)])
     elif m == 3:
-        phi = np.column_stack([0.5 * (s * s - s), 1 - s * s, 0.5 * (s * s + s)])
-        dphi = np.column_stack([s - 0.5, -2 * s, s + 0.5])
+        # nodes at s = -1 (start), +1 (end), 0 (mid)
+        phi = np.column_stack([0.5 * (s * s - s), 0.5 * (s * s + s), 1 - s * s])
+        dphi = np.column_stack([s - 0.5, s + 0.5, -2 * s])
     else:
         raise ValueError("edges must have 2 or 3 nodes")
 

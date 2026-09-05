@@ -4,8 +4,13 @@ import numpy as np
 import pytest
 
 from aa540fem import (
-    Problem, gauss_legendre_quad, gauss_trgl, geometry, interpfunc,
-    quadrature_rule, solve,
+    Problem,
+    gauss_legendre_quad,
+    gauss_trgl,
+    geometry,
+    interpfunc,
+    quadrature_rule,
+    solve,
 )
 from aa540fem.solver import DIRICHLET, NEUMANN
 
@@ -26,7 +31,8 @@ def test_gauss_legendre_matches_matlab_tables():
     r1 = np.sqrt((3 - 2 * np.sqrt(6 / 5)) / 7)
     r2 = np.sqrt((3 + 2 * np.sqrt(6 / 5)) / 7)
     assert np.allclose(np.sort(xi), [-r2, -r1, r1, r2])
-    assert np.allclose(np.sort(wi), np.sort([(18 - np.sqrt(30)) / 36] * 2 + [(18 + np.sqrt(30)) / 36] * 2))
+    expected = [(18 - np.sqrt(30)) / 36] * 2 + [(18 + np.sqrt(30)) / 36] * 2
+    assert np.allclose(np.sort(wi), np.sort(expected))
 
 
 @pytest.mark.parametrize("m", [1, 3, 4, 6, 7, 9, 12, 13])
@@ -64,18 +70,21 @@ def test_shape_functions_derivatives_by_finite_difference(elem_type):
     h = 1e-6
     for xi, eta in pts:
         _, dxi, deta = interpfunc(elem_type, [xi], [eta])
-        fd_xi = (interpfunc(elem_type, [xi + h], [eta])[0] - interpfunc(elem_type, [xi - h], [eta])[0]) / (2 * h)
-        fd_eta = (interpfunc(elem_type, [xi], [eta + h])[0] - interpfunc(elem_type, [xi], [eta - h])[0]) / (2 * h)
+        phi = lambda a, b: interpfunc(elem_type, [a], [b])[0]
+        fd_xi = (phi(xi + h, eta) - phi(xi - h, eta)) / (2 * h)
+        fd_eta = (phi(xi, eta + h) - phi(xi, eta - h)) / (2 * h)
         assert np.allclose(dxi, fd_xi, atol=1e-6)
         assert np.allclose(deta, fd_eta, atol=1e-6)
 
 
 def test_shape_functions_are_nodal():
     # Each shape function is 1 at its own node and 0 at the others.
+    # Gmsh / VTK local node ordering
     nodes = {
-        1: [(0, 0), (0, 1), (1, 0)],
+        1: [(0, 0), (1, 0), (0, 1)],
+        "triangle6": [(0, 0), (1, 0), (0, 1), (0.5, 0), (0.5, 0.5), (0, 0.5)],
         2: [(-1, -1), (1, -1), (1, 1), (-1, 1)],
-        3: [(-1, -1), (0, -1), (1, -1), (-1, 0), (0, 0), (1, 0), (-1, 1), (0, 1), (1, 1)],
+        3: [(-1, -1), (1, -1), (1, 1), (-1, 1), (0, -1), (1, 0), (0, 1), (-1, 0), (0, 0)],
     }
     for t, pts in nodes.items():
         xi, eta = np.array(pts).T
@@ -195,6 +204,35 @@ def test_under_integration_warns():
         assemble(geometry(1.0, 1.0, 2, 3), order=1)
 
 
+@pytest.mark.parametrize("elem_type", ELEM_TYPES + ["triangle6"])
+def test_cg_matches_direct(elem_type):
+    a, b = 2.0, 3.0
+    exact = lambda x, y: np.sin(np.pi * x / a) * np.sin(np.pi * y / b)
+    c = np.pi ** 2 * (1 / a ** 2 + 1 / b ** 2)
+    p = _problem(elem_type, 12,
+                 bc_type={s: DIRICHLET for s in ("top", "right", "left", "bottom")},
+                 bc_val={s: 0.0 for s in ("top", "right", "left", "bottom")},
+                 material=lambda x, y: (1.0, 0.0, 0.0, 1.0, c * exact(x, y)))
+    direct = solve(p)
+    cg = solve(p, method="cg", tol=1e-12)
+    assert cg.info["converged"]
+    assert np.allclose(cg.T, direct.T, atol=1e-8)
+
+
+def test_unlisted_tags_are_natural():
+    # Only top/bottom given: left/right default to zero flux, same as listing them Neumann.
+    p = Problem(elems=6, elem_type=2, bc_type={"top": DIRICHLET, "bottom": DIRICHLET},
+                bc_val={"top": 100.0, "bottom": 0.0})
+    sol = solve(p)
+    assert np.allclose(sol.T, 100.0 * sol.mesh.y / 6.0, atol=1e-8)
+
+
+def test_unknown_method_is_rejected():
+    with pytest.raises(ValueError):
+        solve(Problem(elems=2, elem_type=2), method="gmres")
+
+
 def test_pure_neumann_is_rejected():
     with pytest.raises(ValueError):
-        solve(Problem(elems=4, elem_type=2, bc_type={s: NEUMANN for s in ("top", "right", "left", "bottom")}))
+        all_neumann = {s: NEUMANN for s in ("top", "right", "left", "bottom")}
+        solve(Problem(elems=4, elem_type=2, bc_type=all_neumann))

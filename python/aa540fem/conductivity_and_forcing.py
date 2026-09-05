@@ -6,7 +6,7 @@ This is one of the two files meant to be edited by the user (the other is
 
 from __future__ import annotations
 
-import numpy as np
+import numpy as np  # noqa: F401  (available for user expressions below)
 
 
 def conductivity_and_forcing(x, y):

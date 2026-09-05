@@ -135,20 +135,27 @@ def gauss_trgl(m: int = 3) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return np.asarray(xi), np.asarray(eta), np.asarray(w)
 
 
-def quadrature_rule(elem_type: int, order: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+_FAMILY = {1: "triangle", 2: "quad", 3: "quad"}
+
+
+def quadrature_rule(family, order: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Quadrature points ``(xi, eta)`` and weights ``w`` for a reference element.
 
-    * ``elem_type == 1`` (triangle): ``gauss_trgl(order)`` with the weights
-      scaled by the reference-triangle area (1/2) so that ``sum(w) == 1/2``.
-    * ``elem_type in (2, 3)`` (quadrilaterals): tensor product of the 1-D
-      Gauss-Legendre rule of the given order on [-1, 1]^2, ``sum(w) == 4``.
+    ``family`` is ``"triangle"`` or ``"quad"`` (the legacy element type
+    numbers 1, 2 and 3 are accepted too).
+
+    * triangle: ``gauss_trgl(order)`` with the weights scaled by the
+      reference-triangle area (1/2) so that ``sum(w) == 1/2``.
+    * quad: tensor product of the 1-D Gauss-Legendre rule of the given order
+      on [-1, 1]^2, ``sum(w) == 4``.
     """
-    if elem_type == 1:
+    family = _FAMILY.get(family, family)
+    if family == "triangle":
         xi, eta, w = gauss_trgl(order)
         return xi, eta, 0.5 * w
-    if elem_type in (2, 3):
+    if family == "quad":
         x1, w1 = gauss_legendre_quad(order)
         xi, eta = np.meshgrid(x1, x1, indexing="ij")
         w = np.outer(w1, w1)
         return xi.ravel(), eta.ravel(), w.ravel()
-    raise ValueError(f"Unknown element type {elem_type!r}; expected 1, 2 or 3")
+    raise ValueError(f"Unknown element family {family!r}; expected 'triangle' or 'quad'")
