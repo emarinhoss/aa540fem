@@ -18,16 +18,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install
-        run: python -m pip install -e "python[mesh,amg,dev]"
+        run: python -m pip install -e ".[mesh,amg,dev]"
       - name: Lint
-        run: ruff check python
+        run: ruff check .
       - name: Test
-        run: python -m pytest python/tests -q
-      - name: Run the driver and the annulus example
+        run: python -m pytest -q
+      - name: Run the examples and scripts
         run: |
-          cd python
-          python main.py -o ''
-          python examples/annulus.py --mesh examples/annulus_quad9.msh --method cg --no-plot
+          python examples/heat_rectangle.py -o ''
+          python examples/annulus.py --mesh examples/meshes/annulus_quad9.msh --method cg --no-plot
           python scripts/convergence.py --elems 4 8
           python scripts/convergence.py --transient --dts 0.005 0.0025
           python examples/convection_diffusion.py --no-plot

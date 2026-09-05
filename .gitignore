@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+temperature.png
+*.vtu
+*.pvd
+airfoil_out/
+*.csv
+
+# LaTeX build files of report/
+*.aux
+*.log
+*.bbl
+*.blg
+*.out
+*.toc
