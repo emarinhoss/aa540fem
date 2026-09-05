@@ -47,7 +47,22 @@ class FlowAssembler:
         self.space = TaylorHoodSpace(self.mesh)
         self.blocks = [_Block(self.mesh, name, conn, problem.order)
                        for name, conn in self.mesh.cells.items()]
+        self.mu_t = None
+        if problem.eddy_viscosity is not None:
+            self.mu_t = np.asarray(problem.eddy_viscosity, dtype=float)
+            if self.mu_t.shape != (self.space.N,):
+                raise ValueError("eddy_viscosity must be a nodal array")
         self.K, self.M, self.Bx, self.By = self._linear_matrices()
+
+    def viscosity(self, b):
+        """``mu_eff`` and its gradient at the quadrature points of block ``b``."""
+        mu = self.problem.mu
+        if self.mu_t is None:
+            zero = np.zeros_like(b.X)
+            return np.full_like(b.X, mu), zero, zero
+        mt = self.mu_t[b.conn]
+        return (mu + mt @ b.phi.T, np.einsum("eqi,ei->eq", b.dphi_dx, mt),
+                np.einsum("eqi,ei->eq", b.dphi_dy, mt))
 
     # -- helpers ------------------------------------------------------
     def _coo(self, entries):
@@ -66,19 +81,32 @@ class FlowAssembler:
 
     def _linear_matrices(self):
         sp_ = self.space
-        mu, rho = self.problem.mu, self.problem.rho
+        rho = self.problem.rho
         K, M, Bx, By = [], [], [], []
         for b in self.blocks:
-            Ke = mu * (np.einsum("eq,eqi,eqj->eij", b.wh, b.dphi_dx, b.dphi_dx)
-                       + np.einsum("eq,eqi,eqj->eij", b.wh, b.dphi_dy, b.dphi_dy))
+            mu_q, dmu_dx, dmu_dy = self.viscosity(b)
+            wmu = b.wh * mu_q
+            Ke = (np.einsum("eq,eqi,eqj->eij", wmu, b.dphi_dx, b.dphi_dx)
+                  + np.einsum("eq,eqi,eqj->eij", wmu, b.dphi_dy, b.dphi_dy))
             Me = rho * np.einsum("eq,qi,qj->eij", b.wh, b.phi, b.phi)
             Bxe = np.einsum("eq,qk,eqj->ekj", b.wh, b.psi, b.dphi_dx)
             Bye = np.einsum("eq,qk,eqj->ekj", b.wh, b.psi, b.dphi_dy)
             ux, uy, p = sp_.dof_ux(b.conn), sp_.dof_uy(b.conn), sp_.dof_p(b.pconn)
-            for dof in (ux, uy):
+            dofs = (ux, uy)
+            for dof in dofs:
                 r, c = self._pair(dof, dof)
                 K.append((r, c, Ke))
                 M.append((r, c, Me))
+            if self.mu_t is not None:
+                # variable viscosity term - grad(u)^T . grad(mu):
+                # block (c, d) = - int phi_i (d_d mu) (d_c phi_j)
+                dgrad = (b.dphi_dx, b.dphi_dy)
+                dmu = (dmu_dx, dmu_dy)
+                for c in range(2):
+                    for d in range(2):
+                        r, cc = self._pair(dofs[c], dofs[d])
+                        K.append((r, cc, -np.einsum("eq,qi,eqj->eij", b.wh * dmu[d], b.phi,
+                                                    dgrad[c])))
             r, c = self._pair(p, ux)
             Bx.append((r, c, Bxe))
             r, c = self._pair(p, uy)
@@ -120,8 +148,7 @@ class FlowAssembler:
         stab = prob.stabilisation if stabilise is None else stabilise
         pspg = prob.pspg if pspg is None else pspg
         sp_ = self.space
-        mu, rho = prob.mu, prob.rho
-        nu = mu / rho
+        rho = prob.rho
         u, v, p = sp_.split(U)
         if U_old is not None:
             u_old, v_old, _ = sp_.split(U_old)
@@ -158,14 +185,27 @@ class FlowAssembler:
                 continue
 
             # full momentum residual at the quadrature points and its derivatives
+            mu_q, dmu_dx, dmu_dy = self.viscosity(b)
+            nu = mu_q / rho
             lap = np.einsum("eqi,ei->eq", b.lap_phi, ue), np.einsum("eqi,ei->eq", b.lap_phi, ve)
+            grads = ((dudx, dudy), (dvdx, dvdy))
+            # - div(mu grad u) - grad(u)^T grad(mu)
+            #   = - mu lap u - grad mu . grad u - grad(u)^T grad mu
+            visc = [-mu_q * lap[c] - (dmu_dx * grads[c][0] + dmu_dy * grads[c][1])
+                    - (dmu_dx * grads[0][c] + dmu_dy * grads[1][c]) for c in range(2)]
             pe = p[sp_.p_index[b.pconn]]
             gradp = np.einsum("eqk,ek->eq", b.dpsi_dx, pe), np.einsum("eqk,ek->eq", b.dpsi_dy, pe)
             body = self._body_force(b, t)
-            R = [conv[c] - mu * lap[c] + gradp[c] - (rho * body[c] if body else 0.0)
+            R = [conv[c] + visc[c] + gradp[c] - (rho * body[c] if body else 0.0)
                  for c in range(2)]
-            dR = [[dconv[c][d] - (mu * b.lap_phi if c == d else 0.0) for d in range(2)]
-                  for c in range(2)]
+            dgradq = (b.dphi_dx, b.dphi_dy)
+            dmu = (dmu_dx, dmu_dy)
+            dR = [[dconv[c][d]
+                   - (mu_q[:, :, None] * b.lap_phi
+                      + dmu_dx[:, :, None] * b.dphi_dx + dmu_dy[:, :, None] * b.dphi_dy
+                      if c == d else 0.0)
+                   - dmu[d][:, :, None] * dgradq[c]          # d/du_{d,j} of -d_c u_d d_d mu
+                   for d in range(2)] for c in range(2)]
             if dt is not None and U_old is not None:
                 uo = u_old[b.conn] @ b.phi.T, v_old[b.conn] @ b.phi.T
                 for c, (cur, old) in enumerate(((uq, uo[0]), (vq, uo[1]))):

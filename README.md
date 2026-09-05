@@ -71,6 +71,7 @@ python examples/cylinder.py             # flow past a cylinder, Schaefer-Turek d
 python examples/airfoil.py              # NACA 0012 at 5 deg: impulsive start, C_L / C_D history
 python examples/flat_plate.py           # laminar plate at Re 1e5 vs Blasius (stabilised, PTC)
 python examples/cylinder_shedding.py    # Re 100 vortex shedding, Strouhal number (Schaefer-Turek 2D-2)
+python examples/turbulent_flat_plate.py # Spalart-Allmaras RANS plate at Re 1e6 vs law of the wall
 python scripts/convergence.py           # mesh-convergence study, prints observed orders
 python scripts/convergence.py --transient   # temporal orders of backward Euler / Crank-Nicolson
 python -m pytest                        # verification suite
@@ -229,6 +230,23 @@ meshes (quadrilaterals extruded from the wall inside a triangular mesh)
 come from `make_meshes.make_flat_plate()` and the `boundary_layer=` option
 of `make_meshes.make()`.
 
+### Turbulence (RANS)
+
+```python
+from aa540fem.turbulence import solve_rans
+
+prob = FlowProblem(mesh, mu=1e-6, rho=1.0, stabilisation=True, bc=...)   # laminar viscosity
+rans = solve_rans(prob, wall_tags=["plate"])     # Spalart-Allmaras, segregated coupling
+rans.flow.wall_traction("plate")                 # turbulent skin friction
+rans.nu_t, rans.nu_tilde, rans.distance          # eddy viscosity, working variable, wall distance
+rans.save("rans.vtu")
+```
+
+The Spalart-Allmaras one-equation model (negative variant, no trip term)
+is documented with its equations, references and implementation in
+[`docs/turbulence.md`](docs/turbulence.md); it needs wall-resolved meshes
+(first cell at y+ of about 1, see `make_meshes.make_flat_plate`).
+
 For the incompressible system the pressure is a constraint multiplier, not
 an ODE unknown, so the RK45 scheme is applied to the velocity with a
 pressure projection at every stage: each stage solves the constant
@@ -278,6 +296,8 @@ continuation in Reynolds number is done by passing a previous `sol.U` as
 | `transport/postprocess.py` | centroid gradients and fluxes, L2/H1 error norms | (new) |
 | `incompressible/problem.py`, `space.py`, `assembler.py` | `FlowProblem`, Taylor-Hood dofs, Navier-Stokes residual/Jacobian with SUPG / grad-div / PSPG | (new) |
 | `incompressible/solution.py`, `steady.py`, `transient.py` | fields, wall traction and forces, Newton / PTC, RK45 / theta | (new) |
+| `turbulence/spalart_allmaras.py`, `turbulence/rans.py` | Spalart-Allmaras model and its coupling to the flow | (new) |
+| `core/wall_distance.py`, `linalg/continuation.py` | wall distance, pseudo-transient continuation | (new) |
 | `examples/heat_rectangle.py` | driver with the user inputs of the original | `main.m` |
 
 ## Verification
@@ -391,9 +411,9 @@ coefficients with Newton's method, and incompressible Navier-Stokes with
 Taylor-Hood elements including body forces on a boundary (drag and lift).
 Also done: SUPG/grad-div stabilisation, pseudo-transient continuation,
 boundary-layer meshes and wall-shear output, validated on the Blasius plate
-and the shedding cylinder.  What the flow solver still lacks for
-aerodynamic work, roughly in order of usefulness: an iterative saddle-point
-solver
+and the shedding cylinder; and the Spalart-Allmaras RANS model
+(`docs/turbulence.md`).  What the flow solver still lacks for aerodynamic
+work, roughly in order of usefulness: an iterative saddle-point solver
 (block preconditioning) to go beyond ~10^5 unknowns, a turbulence model,
 and finally compressibility, where a finite-volume or discontinuous
 Galerkin discretisation replaces continuous Galerkin.  Aircraft-scale RANS

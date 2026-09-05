@@ -179,6 +179,12 @@ class Mesh:
                 tris.append(conn[:, [0, 2, 3]])
         return np.vstack(tris)
 
+    def wall_distance(self, tags) -> np.ndarray:
+        """Nodal distance to the boundary edges of ``tags`` (a name or a list)."""
+        from aa540fem.core.wall_distance import wall_distance
+
+        return wall_distance(self, tags)
+
     def centroids(self) -> np.ndarray:
         """Physical centroid of every element, concatenated in block order."""
         out = []

@@ -37,6 +37,11 @@ class FlowProblem:
     pspg        : add PSPG pressure stabilisation to the continuity equation
                   (not needed for the inf-sup stable Taylor-Hood pair; ignored
                   by the RK45 time integrator).
+    eddy_viscosity : optional nodal array of the turbulent viscosity
+                  ``mu_t`` (set by the RANS coupling); the momentum equations
+                  then use ``mu + mu_t(x)`` with the extra term
+                  ``- grad(u)^T . grad(mu_t)`` of the variable-viscosity
+                  stress divergence.
     """
 
     mesh: Mesh
@@ -49,6 +54,7 @@ class FlowProblem:
     order: int | None = None
     stabilisation: bool = False
     pspg: bool = False
+    eddy_viscosity: object = None
 
     def validate(self):
         for name in self.mesh.cells:

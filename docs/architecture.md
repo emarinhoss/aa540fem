@@ -71,15 +71,14 @@ distance is a mesh utility (`core/`), wall functions a boundary-condition
 type.  The coupling loop (segregated or monolithic Newton) belongs in
 `incompressible/steady.py` / `transient.py`.
 
-**Turbulence, concretely.**  With the stabilised momentum equations, the
-boundary-layer meshes and `wall_traction` in place, a Spalart-Allmaras
-closure needs: a wall-distance field (mesh utility), the eddy-viscosity
-transport equation assembled with `transport/element.elem_operators`
-(SUPG scalar convection-diffusion with source terms), a variable
-viscosity `mu + mu_t` at the quadrature points of
-`incompressible/assembler.py` (today `mu` is a constant), and a segregated
-coupling loop (flow solve, then turbulence solve, repeated) driven by the
-pseudo-transient continuation.
+**Turbulence (done: Spalart-Allmaras, `turbulence/`).**  The closure is
+one transported scalar assembled on the flow solver's quadrature blocks
+(`turbulence/spalart_allmaras.py`), the wall distance is a mesh utility
+(`core/wall_distance.py`), the eddy viscosity enters the momentum
+equations as a nodal field (`FlowProblem.eddy_viscosity`), and
+`turbulence/rans.py` runs the segregated coupling.  A second model (k-omega
+SST) would follow the same pattern with two transported scalars; see
+`docs/turbulence.md`.
 
 **Compressible flow.**  Continuous Galerkin handles shocks poorly; a
 `compressible/` subpackage would more naturally be a finite-volume or
