@@ -132,6 +132,7 @@ def main(argv=None):
             ax.axhline(cd, color="C1", ls=":", lw=1)
         ax.set_xlabel("t U / c")
         ax.set_ylabel("coefficient")
+        ax.set_ylim(0, 0.6)                  # the first-step spike of the impulsive start is off-scale
         ax.set_title(f"NACA 0012, alpha = 5 deg, Re = {args.re:g}, impulsive start")
         ax.legend()
         ax.grid(alpha=0.3)

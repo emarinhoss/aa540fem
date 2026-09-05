@@ -250,10 +250,18 @@ Schaefer-Turek cylinder benchmark at Re = 20:
 
 (lift is two orders of magnitude smaller than drag and needs a finer mesh
 around the cylinder to converge).  The airfoil case at Re = 1000 has no
-exact reference; published laminar results for the NACA 0012 at 5 degrees
-and Re = 1000 give C_L around 0.3 and C_D around 0.13 (Kurtulus 2015 and
-similar studies), which the example reproduces to within the accuracy one
-expects of its 15k-node mesh.
+exact reference; `examples/airfoil.py` on its 15k-node mesh (dt = 0.05,
+160 steps, 4 minutes) gives
+
+| NACA 0012, alpha = 5 deg, Re = 1000 | C_L    | C_D    |
+|-------------------------------------|--------|--------|
+| transient at t U / c = 8            | 0.2565 | 0.1289 |
+| steady Newton from that state       | 0.2481 | 0.1285 |
+
+Published laminar computations for this case (e.g. Kurtulus 2015) report
+C_L of roughly 0.25-0.3 and C_D of roughly 0.13; the slow drift of C_L
+after t = 2 is the wake and the separated region on the suction side
+settling, which take many chord times at this Reynolds number.
 `scripts/convergence.py` on the manufactured solution
 `T = sin(pi x/a) sin(pi y/b)` gives the expected orders:
 
