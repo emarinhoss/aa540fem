@@ -59,7 +59,8 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
     if continuation in ("auto", "newton") or stokes:
         res = newton_iterate(residual_jacobian, U, fixed, method, rtol=rtol, atol=atol,
                              max_newton=max_newton, damping=damping, verbose=verbose,
-                             abort_ratio=100.0 if continuation == "auto" else None)
+                             abort_ratio=100.0 if continuation == "auto" else None,
+                             stall_iterations=5 if continuation == "auto" else None)
     if not stokes and (continuation == "ptc" or (continuation == "auto" and not res.converged)):
         if verbose and res is not None:
             print("  Newton did not converge; switching to pseudo-transient continuation")

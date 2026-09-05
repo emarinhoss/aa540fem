@@ -25,7 +25,8 @@ class NewtonResult:
 def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: float = 1e-10,
            maxiter=None, rtol: float = 1e-10, atol: float = 1e-12, max_newton: int = 25,
            damping: bool = True, verbose: bool = False,
-           frozen_jacobian: bool = False, abort_ratio: float | None = None) -> NewtonResult:
+           frozen_jacobian: bool = False, abort_ratio: float | None = None,
+           stall_iterations: int | None = None) -> NewtonResult:
     """Solve ``R(T) = 0`` with (damped) Newton iterations.
 
     Parameters
@@ -51,6 +52,9 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
     abort_ratio       : stop early (not converged) as soon as the residual
                         exceeds this multiple of the initial residual, i.e.
                         Newton is diverging.
+    stall_iterations  : stop early (not converged) when this many consecutive
+                        iterations fail to reduce the residual by at least
+                        5 %, i.e. damped Newton is stalling.
     """
     T = np.array(T, dtype=float, copy=True)
     nodes = np.asarray(nodes, dtype=int)
@@ -98,6 +102,12 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
             if verbose:
                 print("  Newton diverging; aborted")
             break
+        if stall_iterations is not None and it >= stall_iterations:
+            recent = result.residuals[-stall_iterations - 1:]
+            if recent[-1] > 0.95 ** stall_iterations * recent[0]:
+                if verbose:
+                    print("  Newton stalling; aborted")
+                break
     else:
         result.converged = r <= target
     return result
