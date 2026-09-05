@@ -179,6 +179,27 @@ class Mesh:
                 tris.append(conn[:, [0, 2, 3]])
         return np.vstack(tris)
 
+    def nodal_size(self) -> np.ndarray:
+        """Smallest corner-edge length among the elements touching each node.
+
+        A local length scale for pseudo-time stepping on anisotropic
+        (boundary-layer) meshes: it follows the thin dimension of stretched
+        cells.
+        """
+        h = np.full(self.n_nodes, np.inf)
+        for name, conn in self.cells.items():
+            el = get_element(name)
+            nc = el.n_corners
+            corners = conn[:, :nc]
+            lengths = np.full(conn.shape[0], np.inf)
+            for i in range(nc):
+                a, b = corners[:, i], corners[:, (i + 1) % nc]
+                lengths = np.minimum(lengths, np.linalg.norm(self.points[a] - self.points[b],
+                                                             axis=1))
+            for j in range(conn.shape[1]):
+                np.minimum.at(h, conn[:, j], lengths)
+        return h
+
     def wall_distance(self, tags) -> np.ndarray:
         """Nodal distance to the boundary edges of ``tags`` (a name or a list)."""
         from aa540fem.core.wall_distance import wall_distance

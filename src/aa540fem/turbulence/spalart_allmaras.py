@@ -212,13 +212,22 @@ class SpalartAllmarasSolver:
         return R, J
 
     def solve(self, nu_tilde0, fixed, values, method="direct", rtol=1e-6, atol=1e-30,
-              dtau0=0.01, max_steps=200, inner_newton=6, verbose=False) -> NewtonResult:
+              dtau0=1.0, max_steps=200, inner_newton=6, verbose=False,
+              local_timestep=True) -> NewtonResult:
         """Steady solve by pseudo-transient continuation from ``nu_tilde0``.
 
         ``fixed``/``values``: Dirichlet nodes and values (walls: 0, inflow:
-        the freestream level).
+        the freestream level).  With ``local_timestep`` the pseudo-time step
+        is scaled by the local cell time scale ``h / (|u| + nu / h)`` and
+        ``dtau0`` is a CFL-like number.
         """
         nt = np.array(nu_tilde0, dtype=float, copy=True)
         nt[fixed] = values
-        return pseudo_transient(self.residual_jacobian, nt, fixed, self.M, method, rtol, atol,
+        M = self.M
+        if local_timestep:
+            h = self.mesh.nodal_size()
+            umag = np.maximum(np.hypot(self.u, self.v), 1e-3)
+            scale = h / (umag + self.model.nu / h)
+            M = (sp.diags(1.0 / scale) @ self.M).tocsr()
+        return pseudo_transient(self.residual_jacobian, nt, fixed, M, method, rtol, atol,
                                 dtau0, max_steps, inner_newton=inner_newton, verbose=verbose)

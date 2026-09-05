@@ -65,8 +65,7 @@ def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=1.5, verbose=T
         u = np.where(x > 0, 1.0 - np.exp(-y / delta), 1.0)
         return u, np.zeros_like(y)
 
-    rans = solve_rans(prob, wall_tags=["plate"], verbose=verbose, U0=initial,
-                      flow_options={"dtau0": 1e-3}, **kw)
+    rans = solve_rans(prob, wall_tags=["plate"], verbose=verbose, U0=initial, **kw)
     flow = rans.flow
 
     tr = flow.wall_traction("plate")
