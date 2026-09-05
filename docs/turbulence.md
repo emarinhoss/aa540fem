@@ -196,16 +196,46 @@ used by the stabilisation carries the same terms, and the finite-difference
 Jacobian check of the momentum equations with a spatially varying `mu_t`
 passes to 1e-10 (test).
 
+### 3.7 Start-up at high Reynolds number
+
+Starting the wall-resolved plate at `Re = 1e6` from uniform flow does not
+work: the first cells are 2e-5 thick, the impulsive start puts a wall shear
+of order `1 / 2e-5` into the residual and neither Newton nor the
+pseudo-transient continuation recovers from it.  `solve_rans` therefore
+offers three devices, all used by the validation case:
+
+- **a smooth initial profile** (`U0` may be a callable `(x, y) -> (u, v)`):
+  the example starts from `u = 1 - exp(-y / delta(x))` with a boundary-layer
+  thickness `delta` of a few per cent of the plate length, which already has
+  the right wall shear to within an order of magnitude;
+- **a viscosity ramp** (`viscosity_ramp=(100, 10, 1)`): the coupled problem
+  is first converged loosely at 100 and 10 times the laminar viscosity, each
+  stage starting from the previous flow and `nu_tilde`, before the target
+  viscosity is solved; the eddy viscosity of the previous stage is a good
+  guess for the next because `nu_t / nu` in the log layer depends only
+  weakly on the Reynolds number;
+- **local pseudo-time stepping** in both continuations
+  (`solve_flow(local_timestep=True)`, `SpalartAllmarasSolver.solve(local_timestep=True)`):
+  the pseudo-time step of every node is scaled by its cell time scale
+  `h / (U + nu / h)` (`Mesh.nodal_size`), so `dtau0` is a CFL-like number
+  and the thin wall cells and the coarse far field advance at their own
+  pace; without it the global step is dictated by the wall cells and the
+  far field never moves.
+
+The sub-solves inside the outer iteration are converged only to a relative
+residual of 1e-5 (flow) and 1e-4 (turbulence): the outer iteration changes
+both fields again anyway, and the final flow solve tightens automatically
+once `nu_t` has settled.
+
 ## 4. Validation: turbulent flat plate
 
 `examples/turbulent_flat_plate.py`: zero-pressure-gradient plate of length
 2 in a `[-0.5, 2.5] x [0, 1]` domain, `U = 1`, `nu = 1e-6` (Re per unit
 length 1e6, `Re_x` up to 2e6), inflow on the left and top, symmetry lines
 upstream and downstream of the plate, do-nothing outflow, `nu_tilde_inf = 3 nu`.
-The mesh (`make_meshes.make_flat_plate(size_wall=2e-5, ratio=1.25,
-thickness=0.06)`) has 30 quadrilateral layers from the wall, the first one
-2e-5 thick (`y+` about 1 with the computed wall shear), inside a triangular
-mesh; 18k nodes.
+The mesh (`make_meshes.make_turbulent_flat_plate()`) has 30 quadrilateral
+layers from the wall, the first one 2e-5 thick (`y+` about 1 with the computed
+wall shear), inside a triangular mesh; 18k nodes.
 
 Comparisons:
 

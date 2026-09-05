@@ -224,10 +224,12 @@ default.  The Jacobian is consistent, including the derivatives of the
 stabilisation parameters and of the flow-direction element length (a
 finite-difference check to 1e-9 is in the tests), which matters on
 stretched boundary-layer cells.
-`continuation="ptc"` (or the `"auto"` fallback) solves backward-Euler
-pseudo-time steps with a few Newton iterations each and grows the step by
-switched evolution relaxation; it is what makes the laminar flat plate at
-Re 1e5 converge from rest, where plain Newton diverges.  Boundary-layer
+`continuation="ptc"` (or the `"auto"` fallback, which restarts from the
+best Newton iterate) solves backward-Euler pseudo-time steps with a few
+Newton iterations each and grows the step by switched evolution
+relaxation; the step is local (scaled by the cell time scale, so `dtau0`
+is a CFL number).  It is what makes the laminar flat plate at Re 1e5
+converge from rest, where plain Newton diverges.  Boundary-layer
 meshes (quadrilaterals extruded from the wall inside a triangular mesh)
 come from `make_meshes.make_flat_plate()` and the `boundary_layer=` option
 of `make_meshes.make()`.
@@ -247,7 +249,7 @@ rans.save("rans.vtu")
 The Spalart-Allmaras one-equation model (negative variant, no trip term)
 is documented with its equations, references and implementation in
 [`docs/turbulence.md`](docs/turbulence.md); it needs wall-resolved meshes
-(first cell at y+ of about 1, see `make_meshes.make_flat_plate`).
+(first cell at y+ of about 1, see `make_meshes.make_turbulent_flat_plate`).
 
 For the incompressible system the pressure is a constraint multiplier, not
 an ODE unknown, so the RK45 scheme is applied to the velocity with a

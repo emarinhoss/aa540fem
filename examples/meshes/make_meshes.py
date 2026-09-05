@@ -116,6 +116,17 @@ def make_flat_plate(name: str = "flat_plate_bl", order: int = 2, x0: float = -0.
         gmsh.finalize()
 
 
+def make_turbulent_flat_plate(name: str = "flat_plate_turb"):
+    """Wall-resolved plate of the Spalart-Allmaras validation (``turbulent_flat_plate.py``).
+
+    Domain ``[-0.5, 2.5] x [0, 1]``, plate ``0 <= x <= 2``; 30 quadrilateral
+    layers from the wall, the first one 2e-5 thick (``y+`` about 1 at
+    ``Re = 1e6`` per unit length), growth ratio 1.25, 6 % total thickness.
+    """
+    return make_flat_plate(name=name, x0=-0.5, x1=2.5, plate=2.0, height=1.0, lc=0.1,
+                           lc_plate=0.02, size_wall=2e-5, ratio=1.25, thickness=0.06)
+
+
 def naca4(code: str = "0012", n: int = 100, chord: float = 1.0):
     """Closed-trailing-edge NACA 4-digit profile, cosine spaced.
 
@@ -232,4 +243,5 @@ if __name__ == "__main__":
     print("wrote", make("cylinder_bl", 2, False, HERE / "cylinder.geo",
                         boundary_layer=([5, 6, 7, 8], 0.0015, 1.2, 0.012)))
     print("wrote", make_flat_plate())
+    print("wrote", make_turbulent_flat_plate())
     print("wrote", make_airfoil())
