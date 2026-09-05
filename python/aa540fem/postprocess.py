@@ -10,6 +10,7 @@ from .conductivity_and_forcing import conductivity_and_forcing as _default_mater
 from .element import physical_gradients
 from .elements import get_element
 from .geometry import Mesh
+from .util import call_xyt
 
 
 @dataclass
@@ -21,7 +22,7 @@ class CellField:
     flux: np.ndarray        # (n_elems, 2)  q = -kappa . grad T
 
 
-def element_gradient(mesh: Mesh, T, material=None) -> CellField:
+def element_gradient(mesh: Mesh, T, material=None, t: float = 0.0) -> CellField:
     """Gradient and heat flux of the nodal field ``T`` at element centroids.
 
     Elements are concatenated in ``mesh.cells`` block order, matching the
@@ -42,7 +43,7 @@ def element_gradient(mesh: Mesh, T, material=None) -> CellField:
         X = xe @ phi[0]
         Y = ye @ phi[0]
         k11, k12, k21, k22, _ = (np.broadcast_to(np.asarray(v, dtype=float), X.shape)
-                                 for v in material(X, Y))
+                                 for v in call_xyt(material, X, Y, t))
         cents.append(np.column_stack([X, Y]))
         grads.append(np.column_stack([gx, gy]))
         fluxes.append(-np.column_stack([k11 * gx + k12 * gy, k21 * gx + k22 * gy]))

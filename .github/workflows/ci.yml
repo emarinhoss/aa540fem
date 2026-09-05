@@ -29,3 +29,6 @@ jobs:
           python main.py -o ''
           python examples/annulus.py --mesh examples/annulus_quad9.msh --method cg --no-plot
           python scripts/convergence.py --elems 4 8
+          python scripts/convergence.py --transient --dts 0.02 0.01
+          python examples/convection_diffusion.py --no-plot
+          python examples/rotating_hill.py --no-plot --steps 100 --series ''

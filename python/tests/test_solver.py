@@ -229,7 +229,7 @@ def test_unlisted_tags_are_natural():
 
 def test_unknown_method_is_rejected():
     with pytest.raises(ValueError):
-        solve(Problem(elems=2, elem_type=2), method="gmres")
+        solve(Problem(elems=2, elem_type=2), method="bicg")
 
 
 def test_pure_neumann_is_rejected():

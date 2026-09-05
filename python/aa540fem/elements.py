@@ -30,6 +30,8 @@ class ReferenceElement:
     n_nodes    : nodes per element.
     min_order  : lowest quadrature order that fully integrates the stiffness
                  matrix for constant conductivity.
+    full_order : quadrature order that also integrates the mass and
+                 convection matrices exactly (the default for assembly).
     faces      : local node indices of each edge, ordered ``(start, end[, mid])``
                  with the element on the left when walking from start to end.
     face_type  : cell type of an edge, ``"line"`` or ``"line3"``.
@@ -42,6 +44,7 @@ class ReferenceElement:
     family: str
     n_nodes: int
     min_order: int
+    full_order: int
     faces: tuple
     face_type: str
     reverse: tuple
@@ -54,14 +57,14 @@ class ReferenceElement:
         return self.shape_fn(xi, eta)
 
     def quadrature(self, order: int | None = None):
-        """Quadrature points and weights; ``None`` selects ``min_order``."""
+        """Quadrature points and weights; ``None`` selects ``full_order``."""
         if order is None:
-            order = self.min_order
+            order = self.full_order
         return quadrature_rule(self.family, order)
 
     @property
     def default_order(self) -> int:
-        return self.min_order
+        return self.full_order
 
     @property
     def nodes_per_face(self) -> int:
@@ -75,28 +78,28 @@ class ReferenceElement:
 _third = 1.0 / 3.0
 
 TRIANGLE = ReferenceElement(
-    name="triangle", family="triangle", n_nodes=3, min_order=1,
+    name="triangle", family="triangle", n_nodes=3, min_order=1, full_order=3,
     faces=((0, 1), (1, 2), (2, 0)), face_type="line",
     reverse=(0, 2, 1), centroid=(_third, _third),
     shape_fn=interpfunc_3, legacy_id=1,
 )
 
 TRIANGLE6 = ReferenceElement(
-    name="triangle6", family="triangle", n_nodes=6, min_order=3,
+    name="triangle6", family="triangle", n_nodes=6, min_order=3, full_order=6,
     faces=((0, 1, 3), (1, 2, 4), (2, 0, 5)), face_type="line3",
     reverse=(0, 2, 1, 5, 4, 3), centroid=(_third, _third),
     shape_fn=interpfunc_6,
 )
 
 QUAD = ReferenceElement(
-    name="quad", family="quad", n_nodes=4, min_order=2,
+    name="quad", family="quad", n_nodes=4, min_order=2, full_order=2,
     faces=((0, 1), (1, 2), (2, 3), (3, 0)), face_type="line",
     reverse=(0, 3, 2, 1), centroid=(0.0, 0.0),
     shape_fn=interpfunc_4, legacy_id=2,
 )
 
 QUAD9 = ReferenceElement(
-    name="quad9", family="quad", n_nodes=9, min_order=3,
+    name="quad9", family="quad", n_nodes=9, min_order=3, full_order=3,
     faces=((0, 1, 4), (1, 2, 5), (2, 3, 6), (3, 0, 7)), face_type="line3",
     reverse=(0, 3, 2, 1, 7, 6, 5, 4, 8), centroid=(0.0, 0.0),
     shape_fn=interpfunc_9, legacy_id=3,

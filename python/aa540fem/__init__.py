@@ -4,23 +4,36 @@ Python port of the AA 540 (University of Washington) MATLAB project.
 
 The equation solved is
 
-    div( kappa(x, y) . grad T ) + f(x, y) = 0
+    rho_c dT/dt + u . grad T - div( kappa(x, y) . grad T ) = f(x, y)
 
-with kappa a full 2x2 conductivity tensor, and Dirichlet (T = T0) or
-Neumann (n . kappa grad T = q_n) boundary conditions on tagged boundaries.
+(steady and without convection this is the original
+``div(kappa grad T) + f = 0``), with kappa a full 2x2 conductivity tensor,
+an optional velocity field u with SUPG stabilisation, and Dirichlet
+(T = T0) or Neumann (n . kappa grad T = q_n) conditions on tagged boundaries.
 Supported elements are 3- and 6-node triangles and 4- and 9-node
 quadrilaterals, on the built-in structured rectangle or on meshes read from
 files.
 """
 
 from .boundary import dirichlet, neumann
-from .element import elem_eqn, jacobian
+from .element import elem_eqn, elem_operators, jacobian, supg_tau
 from .elements import ELEMENTS, ReferenceElement, get_element
 from .geometry import Mesh, geometry
 from .postprocess import CellField, element_gradient, error_norms
 from .quadrature import gauss_legendre_quad, gauss_trgl, quadrature_rule
 from .shape_functions import interpfunc, interpfunc_3, interpfunc_4, interpfunc_6, interpfunc_9
-from .solver import DIRICHLET, NEUMANN, Problem, Solution, assemble, solve
+from .solver import (
+    DIRICHLET,
+    NEUMANN,
+    LinearSolver,
+    Operators,
+    Problem,
+    Solution,
+    assemble,
+    assemble_operators,
+    solve,
+)
+from .transient import TransientSolution, solve_transient
 
 
 def read_mesh(path, orient=True):
@@ -42,7 +55,9 @@ __all__ = [
     "ELEMENTS", "ReferenceElement", "get_element",
     "gauss_legendre_quad", "gauss_trgl", "quadrature_rule",
     "interpfunc", "interpfunc_3", "interpfunc_4", "interpfunc_6", "interpfunc_9",
-    "elem_eqn", "jacobian", "dirichlet", "neumann",
+    "elem_eqn", "elem_operators", "jacobian", "supg_tau", "dirichlet", "neumann",
     "CellField", "element_gradient", "error_norms",
-    "DIRICHLET", "NEUMANN", "Problem", "Solution", "assemble", "solve",
+    "DIRICHLET", "NEUMANN", "LinearSolver", "Operators", "Problem", "Solution",
+    "assemble", "assemble_operators", "solve",
+    "TransientSolution", "solve_transient",
 ]
