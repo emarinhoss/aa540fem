@@ -71,6 +71,18 @@ class FlowSolution:
         """
         return traction_forces(self, tag, order)
 
+    def wall_traction(self, tag: str, order: int = 3) -> dict:
+        """Traction exerted by the fluid on the boundary ``tag`` at the edge
+        quadrature points, sorted along ``x``.
+
+        Returns a dict of flat arrays: ``x``, ``y``, ``tx``, ``ty`` (force per
+        unit length on the wall), ``nx``, ``ny`` (outward normal of the fluid
+        domain), ``p`` and ``weight`` (quadrature weight times edge length,
+        so that ``sum(weight * tx)`` is the force).  The skin friction
+        coefficient is ``2 tx / (rho U^2)`` on a wall aligned with ``x``.
+        """
+        return wall_traction(self, tag, order)
+
     def save(self, path):
         """Write velocity (3-component vector), speed and pressure for ParaView."""
         from aa540fem.io.mesh_files import write_vtk
@@ -79,7 +91,7 @@ class FlowSolution:
                                                       "p": self.p_nodal})
 
 
-def traction_forces(sol: FlowSolution, tag: str, order: int = 3):
+def wall_traction(sol: FlowSolution, tag: str, order: int = 3) -> dict:
     mesh = sol.mesh
     mu = sol.problem.mu
     if tag not in mesh.boundary:
@@ -87,7 +99,7 @@ def traction_forces(sol: FlowSolution, tag: str, order: int = 3):
     wanted = {tuple(sorted(e[:2])) for e in mesh.boundary[tag]}
     s, w1 = gauss_legendre_quad(order)
     p_nodal = sol.p_nodal
-    Fx = Fy = 0.0
+    out = {k: [] for k in ("x", "y", "tx", "ty", "nx", "ny", "p", "weight")}
     for name, conn in mesh.cells.items():
         el = get_element(name)
         pel = PRESSURE_ELEMENT[name]
@@ -125,10 +137,26 @@ def traction_forces(sol: FlowSolution, tag: str, order: int = 3):
             sxx = -pq + 2 * mu * dudx
             syy = -pq + 2 * mu * dvdy
             sxy = mu * (dudy + dvdx)
-            # force on the boundary object = - int sigma . n_fluid ds
-            Fx -= np.sum(w1[None, :] * ds * (sxx * nx + sxy * ny))
-            Fy -= np.sum(w1[None, :] * ds * (sxy * nx + syy * ny))
-    return float(Fx), float(Fy)
+            # traction on the boundary object = - sigma . n_fluid
+            out["tx"].append(-(sxx * nx + sxy * ny).ravel())
+            out["ty"].append(-(sxy * nx + syy * ny).ravel())
+            out["nx"].append(nx.ravel())
+            out["ny"].append(ny.ravel())
+            out["p"].append(pq.ravel())
+            out["weight"].append((w1[None, :] * ds).ravel())
+            out["x"].append((xe @ phi.T).ravel())
+            out["y"].append((ye @ phi.T).ravel())
+    if not out["x"]:
+        return {k: np.zeros(0) for k in out}
+    out = {k: np.concatenate(v) for k, v in out.items()}
+    order_ = np.argsort(out["x"], kind="stable")
+    return {k: v[order_] for k, v in out.items()}
+
+
+def traction_forces(sol: FlowSolution, tag: str, order: int = 3):
+    """Force ``(Fx, Fy)`` on the boundary ``tag``: the integral of :func:`wall_traction`."""
+    tr = wall_traction(sol, tag, order)
+    return float(np.sum(tr["weight"] * tr["tx"])), float(np.sum(tr["weight"] * tr["ty"]))
 
 
 @dataclass

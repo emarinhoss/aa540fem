@@ -145,6 +145,48 @@ def interpfunc_9(xi, eta):
     return phi[:, p], dphi_dxi[:, p], dphi_deta[:, p]
 
 
+def hessian_3(xi, eta):
+    """Second derivatives ``(d2/dxi2, d2/dxideta, d2/deta2)`` of the linear triangle: zero."""
+    xi, eta = _as_1d(xi, eta)
+    z = np.zeros((xi.size, 3))
+    return z, z.copy(), z.copy()
+
+
+def hessian_6(xi, eta):
+    """Second derivatives of the 6-node triangle (constants)."""
+    xi, eta = _as_1d(xi, eta)
+    n = xi.size
+    one = np.ones(n)
+    zero = np.zeros(n)
+    # L1 = 1 - xi - eta, L2 = xi, L3 = eta; phi = L(2L - 1), 4 L_a L_b
+    d_xixi = np.column_stack([4 * one, 4 * one, zero, -8 * one, zero, zero])
+    d_xieta = np.column_stack([4 * one, zero, zero, -4 * one, 4 * one, -4 * one])
+    d_etaeta = np.column_stack([4 * one, zero, 4 * one, zero, zero, -8 * one])
+    return d_xixi, d_xieta, d_etaeta
+
+
+def hessian_4(xi, eta):
+    """Second derivatives of the bilinear quadrilateral: only the mixed one is non-zero."""
+    xi, eta = _as_1d(xi, eta)
+    n = xi.size
+    zero = np.zeros((n, 4))
+    d_xieta = 0.25 * np.tile(np.array([1.0, -1.0, 1.0, -1.0]), (n, 1))
+    return zero, d_xieta, zero.copy()
+
+
+def hessian_9(xi, eta):
+    """Second derivatives of the 9-node quadrilateral (Gmsh ordering)."""
+    xi, eta = _as_1d(xi, eta)
+    lx, dlx = _lagrange_quadratic_1d(xi)
+    ly, dly = _lagrange_quadratic_1d(eta)
+    ddl = np.tile(np.array([1.0, -2.0, 1.0]), (xi.size, 1))       # second derivative of each
+    d_xixi = (ly[:, :, None] * ddl[:, None, :]).reshape(-1, 9)
+    d_xieta = (dly[:, :, None] * dlx[:, None, :]).reshape(-1, 9)
+    d_etaeta = (ddl[:, :, None] * lx[:, None, :]).reshape(-1, 9)
+    pm = QUAD9_FROM_ROWMAJOR
+    return d_xixi[:, pm], d_xieta[:, pm], d_etaeta[:, pm]
+
+
 NODES_PER_ELEMENT = {1: 3, 2: 4, 3: 9}
 
 

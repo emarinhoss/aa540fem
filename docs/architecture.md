@@ -16,8 +16,12 @@
      the scalar equation (diffusion, convection with SUPG, mass, source,
      Newton terms);
    - `incompressible/assembler.py` builds the viscous, mass and divergence
-     matrices once and the convective residual with its Jacobian per
-     evaluation.
+     matrices once and, per evaluation, the convective residual with its
+     Jacobian plus (optionally) the SUPG, grad-div and PSPG stabilisation
+     terms, which need the strong momentum residual at the quadrature
+     points: the Laplacian of the discrete velocity comes from the
+     shape-function Hessians (`core/shape_functions.py`, mapped in
+     `transport/element.physical_laplacian`).
    Element matrices are scattered into global COO/CSR matrices with the
    connectivity; the `TaylorHoodSpace` maps nodes to `[u_x, u_y, p]` dofs.
 4. **Boundary conditions**: Neumann fluxes are edge integrals added to the
@@ -27,8 +31,11 @@
    many right-hand sides.
 5. **Solvers**: `linalg/solvers.py` (direct LU factorised once, CG, GMRES
    with pyamg preconditioning), `linalg/newton.py` (damped Newton on any
-   `residual_jacobian(T)` callable, optional frozen Jacobian),
-   `timestepping/rk.py` (Dormand-Prince RK45 on any `rhs(t, y)`).  The
+   `residual_jacobian(T)` callable, optional frozen Jacobian and divergence
+   abort), `incompressible/steady.pseudo_transient` (backward-Euler
+   pseudo-time steps with inner Newton and switched evolution relaxation,
+   the robust path at high Reynolds number), `timestepping/rk.py`
+   (Dormand-Prince RK45 on any `rhs(t, y)`).  The
    physics modules only provide residual/Jacobian or right-hand-side
    callables; the theta-method loops live with the physics because their
    Newton residual mixes the mass matrix with the physics operators.
@@ -64,9 +71,15 @@ distance is a mesh utility (`core/`), wall functions a boundary-condition
 type.  The coupling loop (segregated or monolithic Newton) belongs in
 `incompressible/steady.py` / `transient.py`.
 
-**Stabilisation for higher Reynolds numbers.**  SUPG/PSPG for the flow
-equations follows the pattern of `supg_tau` in `transport/element.py`,
-added to `incompressible/assembler.py`.
+**Turbulence, concretely.**  With the stabilised momentum equations, the
+boundary-layer meshes and `wall_traction` in place, a Spalart-Allmaras
+closure needs: a wall-distance field (mesh utility), the eddy-viscosity
+transport equation assembled with `transport/element.elem_operators`
+(SUPG scalar convection-diffusion with source terms), a variable
+viscosity `mu + mu_t` at the quadrature points of
+`incompressible/assembler.py` (today `mu` is a constant), and a segregated
+coupling loop (flow solve, then turbulence solve, repeated) driven by the
+pseudo-transient continuation.
 
 **Compressible flow.**  Continuous Galerkin handles shocks poorly; a
 `compressible/` subpackage would more naturally be a finite-volume or

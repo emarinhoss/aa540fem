@@ -83,8 +83,7 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
     U = _initial_state(asm, U0, fixed, vals)
 
     F_old = asm.body_load(0.0)
-    N_old, _ = asm.convection(U)
-    S_old = asm.K @ U + N_old - F_old
+    S_old = asm.K @ U + asm.convection(U, jacobian=False) - F_old
     S_old[2 * space.N:] = 0.0
 
     times = [0.0]
@@ -101,12 +100,13 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
         F_new = asm.body_load(t) if time_dependent else F_old
         U_old = U
 
-        def residual_jacobian(Un, U_old=U_old, F_new=F_new, S_old=S_old, th=th):
-            N, dN = asm.convection(Un)
-            S = asm.K @ Un + N - F_new
+        def residual_jacobian(Un, U_old=U_old, F_new=F_new, S_old=S_old, th=th, t=t):
+            mt = asm.momentum_terms(Un, t=t, dt=dt, U_old=U_old)
+            S = asm.K @ Un + mt.N - F_new
             S[2 * space.N:] = 0.0
-            R = M @ ((Un - U_old) / dt) + th * S + (1 - th) * S_old - B.T @ Un + B @ Un
-            J = (M / dt + th * (asm.K + dN) - B.T + B).tocsr()
+            R = (M @ ((Un - U_old) / dt) + th * S + (1 - th) * S_old - B.T @ Un + B @ Un
+                 + mt.S)
+            J = (M / dt + th * (asm.K + mt.J_N) + mt.J_S - B.T + B).tocsr()
             return R, J
 
         guess = U_old.copy()
@@ -118,8 +118,7 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
             raise RuntimeError(f"Newton did not converge at t = {t:.6g} "
                                f"(|R| = {res.residuals[-1]:.2e})")
         U = res.T
-        N_new, _ = asm.convection(U)
-        S_old = asm.K @ U + N_new - F_new
+        S_old = asm.K @ U + asm.convection(U, jacobian=False) - F_new
         S_old[2 * space.N:] = 0.0
         F_old = F_new
         newton_iterations.append(res.iterations)
@@ -150,7 +149,10 @@ def _solve_flow_transient_rk45(problem, dt, t_end, U0, store_every, verbose, cal
     The matrix is factorised once for the whole run.  The initial velocity
     is projected onto the divergence-free space in the same way.  The
     pressure stored with each snapshot is the stage pressure at that time
-    (the FSAL stage of the accepted step).
+    (the FSAL stage of the accepted step).  With ``stabilisation`` the SUPG
+    and grad-div terms use the pressure of the previous projection and the
+    steady ``tau`` (PSPG is not applied: the projection keeps the continuity
+    rows).
     """
     asm = FlowAssembler(problem)
     space = asm.space
@@ -194,13 +196,19 @@ def _solve_flow_transient_rk45(problem, dt, t_end, U0, store_every, verbose, cal
     F_const = asm.body_load(0.0)
     last = {"p": np.zeros(space.Np)}
 
+    stabilised = problem.stabilisation
+
     def rhs(t, y):
         y = np.array(y, copy=True)
         vals, _ = fixed_values(t)
         y[fixed_vel] = vals[~is_pressure]
-        U = np.concatenate([y, np.zeros(space.Np)])
+        U = np.concatenate([y, last["p"]])          # lagged pressure for the stabilisation
         F = asm.body_load(t) if time_dependent else F_const
-        r = -(asm.K @ U + asm.convection(U, jacobian=False) - F)
+        if stabilised:
+            mt = asm.momentum_terms(U, t=t, pspg=False)
+            r = -(asm.K @ U + mt.N + mt.S - F)
+        else:
+            r = -(asm.K @ U + asm.convection(U, jacobian=False) - F)
         k, p = project(r, t)
         last["p"] = p
         return k

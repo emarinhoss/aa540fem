@@ -25,7 +25,7 @@ class NewtonResult:
 def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: float = 1e-10,
            maxiter=None, rtol: float = 1e-10, atol: float = 1e-12, max_newton: int = 25,
            damping: bool = True, verbose: bool = False,
-           frozen_jacobian: bool = False) -> NewtonResult:
+           frozen_jacobian: bool = False, abort_ratio: float | None = None) -> NewtonResult:
     """Solve ``R(T) = 0`` with (damped) Newton iterations.
 
     Parameters
@@ -48,6 +48,9 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
                         true one, so the converged answer is unchanged; useful
                         in time stepping where the Jacobian changes little
                         per step.
+    abort_ratio       : stop early (not converged) as soon as the residual
+                        exceeds this multiple of the initial residual, i.e.
+                        Newton is diverging.
     """
     T = np.array(T, dtype=float, copy=True)
     nodes = np.asarray(nodes, dtype=int)
@@ -90,6 +93,11 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
         result.steps.append(alpha)
         if verbose:
             print(f"  Newton {it}: |R| = {r:.3e}" + (f" (damping {alpha})" if alpha < 1 else ""))
+        diverging = not np.isfinite(r) or r > (abort_ratio or np.inf) * result.residuals[0]
+        if abort_ratio is not None and diverging:
+            if verbose:
+                print("  Newton diverging; aborted")
+            break
     else:
         result.converged = r <= target
     return result

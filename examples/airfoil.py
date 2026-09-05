@@ -45,10 +45,10 @@ U_INF = 1.0
 RHO = 1.0
 
 
-def setup(mesh_file, re):
+def setup(mesh_file, re, stabilise=False):
     mesh = read_mesh(mesh_file)
     freestream = (U_INF, 0.0)
-    prob = FlowProblem(mesh, mu=RHO * U_INF * CHORD / re, rho=RHO,
+    prob = FlowProblem(mesh, mu=RHO * U_INF * CHORD / re, rho=RHO, stabilisation=stabilise,
                        bc={"inlet": freestream, "farfield": freestream,
                            "airfoil": (0.0, 0.0), "outlet": "open"})
     return prob
@@ -73,6 +73,10 @@ def main(argv=None):
                         help="write the fields at multiples of this time")
     parser.add_argument("--rtol", type=float, default=1e-4, help="rk45 relative tolerance")
     parser.add_argument("--atol", type=float, default=1e-6, help="rk45 absolute tolerance")
+    parser.add_argument("--stabilise", action="store_true",
+                        help="SUPG/grad-div stabilisation (needed above Re ~ 1000 on this mesh)")
+    parser.add_argument("--continuation", default="auto", choices=["auto", "newton", "ptc"],
+                        help="steady solve: Newton, pseudo-transient continuation, or auto")
     parser.add_argument("--startup-steps", type=int, default=4,
                         help="theta: backward-Euler steps before Crank-Nicolson")
     parser.add_argument("--newton-rtol", type=float, default=1e-6, help="theta: Newton tolerance")
@@ -84,7 +88,7 @@ def main(argv=None):
 
     outdir = pathlib.Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    prob = setup(args.mesh, args.re)
+    prob = setup(args.mesh, args.re, args.stabilise)
     mesh = prob.mesh
     print(f"NACA 0012, alpha = 5 deg, Re = {args.re:g}: {mesh.n_nodes} nodes, "
           f"{mesh.n_elems} P2/P1 triangles")
@@ -133,7 +137,7 @@ def main(argv=None):
     steady = None
     if args.steady:
         t0 = time.time()
-        steady = solve_flow(prob, U0=run.final.U)
+        steady = solve_flow(prob, U0=run.final.U, continuation=args.continuation)
         cl, cd = coefficients(steady)
         print(f"steady Newton from the final state: {steady.info['iterations']} iterations "
               f"in {time.time() - t0:.0f} s, converged = {steady.info['converged']}")

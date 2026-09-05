@@ -30,6 +30,13 @@ class FlowProblem:
                   automatically when no boundary is open (enclosed flow).
     pin_value   : value (constant or ``(x, y)``) of the pinned pressure.
     order       : quadrature order (``None``: element default).
+    stabilisation : residual-based SUPG stabilisation of the momentum
+                  equations plus grad-div (LSIC) stabilisation; consistent
+                  (an exact solution stays exact), needed at high cell
+                  Reynolds numbers.  Off by default (plain Galerkin).
+    pspg        : add PSPG pressure stabilisation to the continuity equation
+                  (not needed for the inf-sup stable Taylor-Hood pair; ignored
+                  by the RK45 time integrator).
     """
 
     mesh: Mesh
@@ -40,6 +47,8 @@ class FlowProblem:
     pin_pressure: bool | None = None
     pin_value: object = 0.0
     order: int | None = None
+    stabilisation: bool = False
+    pspg: bool = False
 
     def validate(self):
         for name in self.mesh.cells:

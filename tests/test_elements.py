@@ -91,3 +91,34 @@ def test_reverse_flips_orientation(name):
     # the reversed element is still nodal: shape function r[k] is 1 at node r[k]
     phi, _, _ = el.shape(x[r], y[r])
     assert np.allclose(phi[:, r], np.eye(el.n_nodes))
+
+
+@pytest.mark.parametrize("name", sorted(ELEMENTS))
+def test_hessians_match_finite_differences(name):
+    el = get_element(name)
+    rng = np.random.default_rng(3)
+    pts = rng.random((4, 2)) * 0.4 if el.family == "triangle" else rng.uniform(-0.8, 0.8, (4, 2))
+    h = 1e-5
+    for xi, eta in pts:
+        d_xixi, d_xieta, d_etaeta = el.hessian([xi], [eta])
+        dxi = lambda a, b: el.shape([a], [b])[1]
+        deta = lambda a, b: el.shape([a], [b])[2]
+        assert np.allclose(d_xixi, (dxi(xi + h, eta) - dxi(xi - h, eta)) / (2 * h), atol=1e-6)
+        assert np.allclose(d_xieta, (dxi(xi, eta + h) - dxi(xi, eta - h)) / (2 * h), atol=1e-6)
+        assert np.allclose(d_etaeta, (deta(xi, eta + h) - deta(xi, eta - h)) / (2 * h), atol=1e-6)
+
+
+@pytest.mark.parametrize("name", ["triangle6", "quad9"])
+def test_physical_laplacian_exact_on_affine_elements(name):
+    from aa540fem import geometry
+    from aa540fem.transport.element import jacobian, physical_laplacian
+
+    mesh = geometry(2.0, 3.0, 3, name)
+    el = get_element(name)
+    xi, eta, _ = el.quadrature()
+    _, dxi, deta = el.shape(xi, eta)
+    xe, ye = mesh.x[mesh.conn], mesh.y[mesh.conn]
+    _, *inverse = jacobian(xe, ye, dxi, deta)
+    lap = physical_laplacian(inverse, *el.hessian(xi, eta))
+    T = 3 * mesh.x ** 2 - mesh.y ** 2 + mesh.x * mesh.y       # Laplacian = 6 - 2 = 4
+    assert np.allclose(np.einsum("eqi,ei->eq", lap, T[mesh.conn]), 4.0)

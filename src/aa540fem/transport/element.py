@@ -49,6 +49,20 @@ def jacobian(x, y, dphi_dxi, dphi_deta):
     return hs, dxi_dx, dxi_dy, deta_dx, deta_dy
 
 
+def map_gradients(inverse, dphi_dxi, dphi_deta):
+    """Physical gradients ``(n_elems, nq, n)`` from an inverse Jacobian tuple.
+
+    ``inverse`` is ``(dxi_dx, dxi_dy, deta_dx, deta_dy)`` as returned by
+    :func:`jacobian` (without ``hs``); the natural derivatives may belong to
+    a different element of the same reference geometry (e.g. the pressure
+    element of a Taylor-Hood pair).
+    """
+    dxi_dx, dxi_dy, deta_dx, deta_dy = inverse
+    dphi_dx = dxi_dx[:, :, None] * dphi_dxi[None] + deta_dx[:, :, None] * dphi_deta[None]
+    dphi_dy = dxi_dy[:, :, None] * dphi_dxi[None] + deta_dy[:, :, None] * dphi_deta[None]
+    return dphi_dx, dphi_dy
+
+
 def physical_gradients(x, y, dphi_dxi, dphi_deta):
     """Shape-function gradients in physical coordinates.
 
@@ -56,9 +70,31 @@ def physical_gradients(x, y, dphi_dxi, dphi_deta):
     and the gradients ``(n_elems, nq, n)``.
     """
     hs, dxi_dx, dxi_dy, deta_dx, deta_dy = jacobian(x, y, dphi_dxi, dphi_deta)
-    dphi_dx = dxi_dx[:, :, None] * dphi_dxi[None] + deta_dx[:, :, None] * dphi_deta[None]
-    dphi_dy = dxi_dy[:, :, None] * dphi_dxi[None] + deta_dy[:, :, None] * dphi_deta[None]
+    dphi_dx, dphi_dy = map_gradients((dxi_dx, dxi_dy, deta_dx, deta_dy), dphi_dxi, dphi_deta)
     return hs, dphi_dx, dphi_dy
+
+
+def physical_laplacian(inverse, d_xixi, d_xieta, d_etaeta):
+    """Laplacian of the shape functions ``(n_elems, nq, n)`` from the natural Hessian.
+
+    Uses the inverse Jacobian twice and neglects the curvature of the
+    isoparametric map, which is exact on affine elements (straight-sided
+    triangles, parallelogram quadrilaterals) and a small approximation on
+    curved or distorted ones.
+    """
+    dxi_dx, dxi_dy, deta_dx, deta_dy = inverse
+    a = dxi_dx ** 2 + dxi_dy ** 2
+    b = dxi_dx * deta_dx + dxi_dy * deta_dy
+    c = deta_dx ** 2 + deta_dy ** 2
+    return (a[:, :, None] * d_xixi[None] + 2 * b[:, :, None] * d_xieta[None]
+            + c[:, :, None] * d_etaeta[None])
+
+
+def supg_length(sx, sy, dphi_dx, dphi_dy):
+    """Element length in the direction ``s = (sx, sy)`` (unit vectors, ``(n_elems, nq)``):
+    ``h = 2 / sum_i |s . grad phi_i|`` (Tezduyar)."""
+    sgrad = sx[:, :, None] * dphi_dx + sy[:, :, None] * dphi_dy
+    return 2.0 / np.maximum(np.abs(sgrad).sum(axis=2), 1e-300)
 
 
 def elem_eqn(x, y, phi, dphi_dxi, dphi_deta, w, material=None, t=0.0):
@@ -144,8 +180,7 @@ def supg_tau(ux, uy, k11, k12, k21, k22, dphi_dx, dphi_dy, dt=None):
     safe = np.where(moving, umag, 1.0)
     sx = ux / safe
     sy = uy / safe
-    sgrad = sx[:, :, None] * dphi_dx + sy[:, :, None] * dphi_dy
-    h = 2.0 / np.maximum(np.abs(sgrad).sum(axis=2), 1e-300)
+    h = supg_length(sx, sy, dphi_dx, dphi_dy)
     kappa_u = (k11 * ux * ux + (k12 + k21) * ux * uy + k22 * uy * uy) / safe ** 2
 
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):

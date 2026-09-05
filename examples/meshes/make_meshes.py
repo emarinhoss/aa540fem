@@ -2,9 +2,12 @@
 
 Requires the ``gmsh`` Python package (``pip install gmsh``).  Writes the
 annulus meshes ``annulus_tri.msh``, ``annulus_tri6.msh``, ``annulus_quad.msh``,
-``annulus_quad9.msh``, the cylinder-in-channel mesh ``cylinder_tri6.msh`` and
-the NACA 0012 far-field mesh ``airfoil_naca0012_a5_tri6.msh`` next to this
-file.
+``annulus_quad9.msh``, the cylinder-in-channel mesh ``cylinder_tri6.msh`` (and
+its boundary-layer variant ``cylinder_bl.msh``), the flat-plate mesh
+``flat_plate_bl.msh`` and the NACA 0012 far-field mesh
+``airfoil_naca0012_a5_tri6.msh`` next to this file.  The ``_bl`` meshes use
+Gmsh's boundary-layer field, which extrudes quadrilaterals from the wall
+(``quad9`` after the second-order pass) into an otherwise triangular mesh.
 """
 
 from __future__ import annotations
@@ -26,17 +29,84 @@ MESHES = {
 }
 
 
-def make(name: str, order: int, quads: bool, geo: pathlib.Path = HERE / "annulus.geo"):
+def _boundary_layer(curves, size_wall, ratio, thickness, quads=True):
+    """Gmsh boundary-layer field on ``curves`` (call after synchronize)."""
+    f = gmsh.model.mesh.field
+    bl = f.add("BoundaryLayer")
+    f.setNumbers(bl, "CurvesList", curves)
+    f.setNumber(bl, "Size", size_wall)
+    f.setNumber(bl, "Ratio", ratio)
+    f.setNumber(bl, "Thickness", thickness)
+    f.setNumber(bl, "Quads", 1 if quads else 0)
+    f.setAsBoundaryLayer(bl)
+    return bl
+
+
+def make(name: str, order: int, quads: bool, geo: pathlib.Path = HERE / "annulus.geo",
+         boundary_layer=None):
+    """Mesh a ``.geo`` file.  ``boundary_layer=(curves, size, ratio, thickness)``
+    adds a quadrilateral boundary layer on those curve tags."""
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.open(str(geo))
+        if boundary_layer is not None:
+            _boundary_layer(*boundary_layer)
         if quads:
             gmsh.option.setNumber("Mesh.Algorithm", 8)          # Frontal-Delaunay for quads
             gmsh.option.setNumber("Mesh.RecombineAll", 1)
             gmsh.option.setNumber("Mesh.RecombinationAlgorithm", 2)
         gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.option.setNumber("Mesh.SecondOrderIncomplete", 0)  # quad9 / triangle6
+        gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+        gmsh.model.mesh.generate(2)
+        out = HERE / f"{name}.msh"
+        gmsh.write(str(out))
+        return out
+    finally:
+        gmsh.finalize()
+
+
+def make_flat_plate(name: str = "flat_plate_bl", order: int = 2, x0: float = -0.5,
+                    x1: float = 2.0, plate: float = 1.5, height: float = 0.5,
+                    lc: float = 0.05, lc_plate: float = 0.02, size_wall: float = 2e-3,
+                    ratio: float = 1.15, thickness: float = 0.04):
+    """Laminar flat-plate domain ``[x0, x1] x [0, height]``.
+
+    The plate is ``y = 0, 0 <= x <= plate`` (tag ``plate``); upstream of it
+    the bottom is a symmetry line (tag ``symmetry``); ``inlet``, ``outlet``
+    and ``top`` are the other sides.  A quadrilateral boundary layer grows
+    from the plate (first cell ``size_wall``, growth ``ratio``, total
+    ``thickness``); the rest is triangles.
+    """
+    gmsh.initialize()
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        geo = gmsh.model.geo
+        p1 = geo.addPoint(x0, 0.0, 0.0, lc)
+        p2 = geo.addPoint(0.0, 0.0, 0.0, lc_plate)
+        p3 = geo.addPoint(plate, 0.0, 0.0, lc_plate)
+        p4 = geo.addPoint(x1, 0.0, 0.0, lc)
+        p5 = geo.addPoint(x1, height, 0.0, lc)
+        p6 = geo.addPoint(x0, height, 0.0, lc)
+        symmetry = geo.addLine(p1, p2)
+        plate_line = geo.addLine(p2, p3)
+        wake = geo.addLine(p3, p4)
+        outlet = geo.addLine(p4, p5)
+        top = geo.addLine(p5, p6)
+        inlet = geo.addLine(p6, p1)
+        loop = geo.addCurveLoop([symmetry, plate_line, wake, outlet, top, inlet])
+        surface = geo.addPlaneSurface([loop])
+        geo.synchronize()
+        gmsh.model.addPhysicalGroup(1, [inlet], name="inlet")
+        gmsh.model.addPhysicalGroup(1, [outlet], name="outlet")
+        gmsh.model.addPhysicalGroup(1, [top], name="top")
+        gmsh.model.addPhysicalGroup(1, [symmetry, wake], name="symmetry")
+        gmsh.model.addPhysicalGroup(1, [plate_line], name="plate")
+        gmsh.model.addPhysicalGroup(2, [surface], name="fluid")
+        _boundary_layer([plate_line], size_wall, ratio, thickness)
+        gmsh.option.setNumber("Mesh.ElementOrder", order)
+        gmsh.option.setNumber("Mesh.SecondOrderIncomplete", 0)
         gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
         gmsh.model.mesh.generate(2)
         out = HERE / f"{name}.msh"
@@ -159,4 +229,7 @@ def make_airfoil(name: str = "airfoil_naca0012_a5_tri6", code: str = "0012",
 if __name__ == "__main__":
     for name, (geo, order, quads) in MESHES.items():
         print("wrote", make(name, order, quads, HERE / geo))
+    print("wrote", make("cylinder_bl", 2, False, HERE / "cylinder.geo",
+                        boundary_layer=([5, 6, 7, 8], 0.0015, 1.2, 0.012)))
+    print("wrote", make_flat_plate())
     print("wrote", make_airfoil())

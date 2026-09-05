@@ -69,6 +69,8 @@ python examples/nonlinear_conduction.py # kappa(T) = 1 + beta T, Newton vs Picar
 python examples/cavity.py               # lid-driven cavity vs Ghia et al.
 python examples/cylinder.py             # flow past a cylinder, Schaefer-Turek drag/lift
 python examples/airfoil.py              # NACA 0012 at 5 deg: impulsive start, C_L / C_D history
+python examples/flat_plate.py           # laminar plate at Re 1e5 vs Blasius (stabilised, PTC)
+python examples/cylinder_shedding.py    # Re 100 vortex shedding, Strouhal number (Schaefer-Turek 2D-2)
 python scripts/convergence.py           # mesh-convergence study, prints observed orders
 python scripts/convergence.py --transient   # temporal orders of backward Euler / Crank-Nicolson
 python -m pytest                        # verification suite
@@ -203,6 +205,30 @@ run.final.speed
 run.save_series("out/flow")                   # .vtu per step + .pvd
 ```
 
+### High Reynolds numbers: stabilisation and continuation
+
+```python
+prob = FlowProblem(mesh, mu=1e-5, rho=1.0, bc=..., stabilisation=True)   # SUPG + grad-div
+sol = solve_flow(prob, continuation="auto")   # Newton, then pseudo-transient continuation if needed
+tr = sol.wall_traction("plate")               # x, y, tx, ty, nx, ny, p, weight along the wall
+cf = 2 * tr["tx"] / (rho * U**2)              # skin friction distribution
+```
+
+`stabilisation=True` adds residual-based SUPG to the momentum equations
+(the streamline weight applied to the full residual, including the viscous
+term through the shape-function Hessians, so it is consistent: Poiseuille
+flow stays exact to round-off) and grad-div stabilisation; `pspg=True` adds
+pressure stabilisation, which Taylor-Hood does not need.  It is off by
+default.  The Jacobian omits the derivatives of the stabilisation
+parameters, which costs Newton its quadratic rate but not its convergence.
+`continuation="ptc"` (or the `"auto"` fallback) solves backward-Euler
+pseudo-time steps with a few Newton iterations each and grows the step by
+switched evolution relaxation; it is what makes the laminar flat plate at
+Re 1e5 converge from rest, where plain Newton diverges.  Boundary-layer
+meshes (quadrilaterals extruded from the wall inside a triangular mesh)
+come from `make_meshes.make_flat_plate()` and the `boundary_layer=` option
+of `make_meshes.make()`.
+
 For the incompressible system the pressure is a constraint multiplier, not
 an ODE unknown, so the RK45 scheme is applied to the velocity with a
 pressure projection at every stage: each stage solves the constant
@@ -250,8 +276,8 @@ continuation in Reynolds number is done by passing a previous `sol.U` as
 | `transport/problem.py` | `Problem`, operator assembly, boundary conditions, steady solve | `main.m` |
 | `transport/nonlinear.py`, `transport/transient.py` | Newton steady solve, RK45 / theta time stepping | (new) |
 | `transport/postprocess.py` | centroid gradients and fluxes, L2/H1 error norms | (new) |
-| `incompressible/problem.py`, `space.py`, `assembler.py` | `FlowProblem`, Taylor-Hood dofs, Navier-Stokes residual/Jacobian | (new) |
-| `incompressible/solution.py`, `steady.py`, `transient.py` | fields, traction forces, Newton, RK45 / theta | (new) |
+| `incompressible/problem.py`, `space.py`, `assembler.py` | `FlowProblem`, Taylor-Hood dofs, Navier-Stokes residual/Jacobian with SUPG / grad-div / PSPG | (new) |
+| `incompressible/solution.py`, `steady.py`, `transient.py` | fields, wall traction and forces, Newton / PTC, RK45 / theta | (new) |
 | `examples/heat_rectangle.py` | driver with the user inputs of the original | `main.m` |
 
 ## Verification
@@ -280,8 +306,18 @@ Schaefer-Turek cylinder benchmark at Re = 20:
 | dp       | 0.11748  | 0.11752   |
 | C_L      | 0.0067   | 0.0106    |
 
-(lift is two orders of magnitude smaller than drag and needs a finer mesh
-around the cylinder to converge).  The airfoil case at Re = 1000 has no
+(lift is two orders of magnitude smaller than drag; on the boundary-layer
+mesh `cylinder_bl.msh` with stabilisation the same case gives
+C_D = 5.5795, C_L = 0.0106, both on the reference).  The laminar flat plate
+at Re_L = 1e5 (`examples/flat_plate.py`, stabilised, pseudo-transient
+continuation, 26 s) gives a skin friction within 4 % of Blasius for
+1e4 < Re_x < 1e5 (mean 2.8 %) and velocity profiles within 0.015 of the
+similarity solution at three stations; near the leading edge the
+Navier-Stokes skin friction exceeds Blasius, as it should.  The cylinder at
+Re = 100 (`examples/cylinder_shedding.py`) sheds vortices; its Strouhal
+number and force amplitudes are compared with the Schaefer-Turek 2D-2
+reference (St = 0.30, C_D,max = 3.23, C_L,max = 1.00) in the example
+output.  The airfoil case at Re = 1000 has no
 exact reference; `examples/airfoil.py` on its 15k-node mesh (dt = 0.05,
 160 steps, 4 minutes) gives
 
@@ -353,9 +389,11 @@ Done: the infrastructure (elements, unstructured meshes, output, solvers,
 CI), transient conduction, convection-diffusion with SUPG, nonlinear
 coefficients with Newton's method, and incompressible Navier-Stokes with
 Taylor-Hood elements including body forces on a boundary (drag and lift).
-What the flow solver still lacks for aerodynamic work, roughly in order of
-usefulness: SUPG/PSPG stabilisation for higher Reynolds numbers on coarser
-meshes, an iterative saddle-point solver
+Also done: SUPG/grad-div stabilisation, pseudo-transient continuation,
+boundary-layer meshes and wall-shear output, validated on the Blasius plate
+and the shedding cylinder.  What the flow solver still lacks for
+aerodynamic work, roughly in order of usefulness: an iterative saddle-point
+solver
 (block preconditioning) to go beyond ~10^5 unknowns, a turbulence model,
 and finally compressibility, where a finite-volume or discontinuous
 Galerkin discretisation replaces continuous Galerkin.  Aircraft-scale RANS

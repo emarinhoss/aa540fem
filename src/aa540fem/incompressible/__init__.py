@@ -7,14 +7,20 @@ their corner nodes (Q2/Q1, P2/P1), Newton for the steady problem, adaptive
 RK45 (projected) or the theta-method in time, forces from the traction.
 """
 
-from aa540fem.incompressible.assembler import FlowAssembler
+from aa540fem.incompressible.assembler import FlowAssembler, MomentumTerms
 from aa540fem.incompressible.problem import OPEN, SCHEMES, FlowProblem
-from aa540fem.incompressible.solution import FlowSolution, TransientFlowSolution, traction_forces
+from aa540fem.incompressible.solution import (
+    FlowSolution,
+    TransientFlowSolution,
+    traction_forces,
+    wall_traction,
+)
 from aa540fem.incompressible.space import TaylorHoodSpace
-from aa540fem.incompressible.steady import solve_flow
+from aa540fem.incompressible.steady import pseudo_transient, solve_flow
 from aa540fem.incompressible.transient import solve_flow_transient
 
 __all__ = [
-    "FlowAssembler", "OPEN", "SCHEMES", "FlowProblem", "FlowSolution", "TransientFlowSolution",
-    "traction_forces", "TaylorHoodSpace", "solve_flow", "solve_flow_transient",
+    "FlowAssembler", "MomentumTerms", "OPEN", "SCHEMES", "FlowProblem", "FlowSolution",
+    "TransientFlowSolution", "traction_forces", "wall_traction", "TaylorHoodSpace",
+    "pseudo_transient", "solve_flow", "solve_flow_transient",
 ]

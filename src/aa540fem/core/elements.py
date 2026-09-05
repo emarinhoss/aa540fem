@@ -16,7 +16,16 @@ from typing import Callable
 import numpy as np
 
 from aa540fem.core.quadrature import quadrature_rule
-from aa540fem.core.shape_functions import interpfunc_3, interpfunc_4, interpfunc_6, interpfunc_9
+from aa540fem.core.shape_functions import (
+    hessian_3,
+    hessian_4,
+    hessian_6,
+    hessian_9,
+    interpfunc_3,
+    interpfunc_4,
+    interpfunc_6,
+    interpfunc_9,
+)
 
 
 @dataclass(frozen=True)
@@ -52,11 +61,16 @@ class ReferenceElement:
     centroid: tuple
     nodes: tuple
     shape_fn: Callable = field(repr=False, compare=False)
+    hessian_fn: Callable = field(repr=False, compare=False)
     legacy_id: int | None = None
 
     def shape(self, xi, eta):
         """Shape functions and natural derivatives, each ``(nq, n_nodes)``."""
         return self.shape_fn(xi, eta)
+
+    def hessian(self, xi, eta):
+        """Second natural derivatives ``(d2/dxi2, d2/dxideta, d2/deta2)``, each ``(nq, n)``."""
+        return self.hessian_fn(xi, eta)
 
     def quadrature(self, order: int | None = None):
         """Quadrature points and weights; ``None`` selects ``full_order``."""
@@ -84,7 +98,7 @@ TRIANGLE = ReferenceElement(
     faces=((0, 1), (1, 2), (2, 0)), face_type="line",
     reverse=(0, 2, 1), centroid=(_third, _third),
     nodes=((0, 0), (1, 0), (0, 1)),
-    shape_fn=interpfunc_3, legacy_id=1,
+    shape_fn=interpfunc_3, hessian_fn=hessian_3, legacy_id=1,
 )
 
 TRIANGLE6 = ReferenceElement(
@@ -92,7 +106,7 @@ TRIANGLE6 = ReferenceElement(
     faces=((0, 1, 3), (1, 2, 4), (2, 0, 5)), face_type="line3",
     reverse=(0, 2, 1, 5, 4, 3), centroid=(_third, _third),
     nodes=((0, 0), (1, 0), (0, 1), (0.5, 0), (0.5, 0.5), (0, 0.5)),
-    shape_fn=interpfunc_6,
+    shape_fn=interpfunc_6, hessian_fn=hessian_6,
 )
 
 QUAD = ReferenceElement(
@@ -100,7 +114,7 @@ QUAD = ReferenceElement(
     faces=((0, 1), (1, 2), (2, 3), (3, 0)), face_type="line",
     reverse=(0, 3, 2, 1), centroid=(0.0, 0.0),
     nodes=((-1, -1), (1, -1), (1, 1), (-1, 1)),
-    shape_fn=interpfunc_4, legacy_id=2,
+    shape_fn=interpfunc_4, hessian_fn=hessian_4, legacy_id=2,
 )
 
 QUAD9 = ReferenceElement(
@@ -108,7 +122,7 @@ QUAD9 = ReferenceElement(
     faces=((0, 1, 4), (1, 2, 5), (2, 3, 6), (3, 0, 7)), face_type="line3",
     reverse=(0, 3, 2, 1, 7, 6, 5, 4, 8), centroid=(0.0, 0.0),
     nodes=((-1, -1), (1, -1), (1, 1), (-1, 1), (0, -1), (1, 0), (0, 1), (-1, 0), (0, 0)),
-    shape_fn=interpfunc_9, legacy_id=3,
+    shape_fn=interpfunc_9, hessian_fn=hessian_9, legacy_id=3,
 )
 
 ELEMENTS = {e.name: e for e in (TRIANGLE, TRIANGLE6, QUAD, QUAD9)}

@@ -34,5 +34,7 @@ jobs:
           python examples/nonlinear_conduction.py --no-plot
           python examples/cavity.py --no-plot --elems 16 --vtk ''
           python examples/cylinder.py --no-plot --vtk ''
+          python examples/flat_plate.py --no-plot
+          python examples/cylinder_shedding.py --no-plot --t-end 0.05 --dt 0.01 --output-interval 0.05 --outdir /tmp/shedding
           python examples/airfoil.py --no-plot --no-steady --t-end 0.05 --output-interval 0.05 --outdir /tmp/airfoil
           python examples/airfoil.py --no-plot --no-steady --scheme theta --dt 0.05 --t-end 0.1 --output-interval 0.05 --outdir /tmp/airfoil_theta
