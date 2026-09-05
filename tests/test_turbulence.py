@@ -101,7 +101,7 @@ def test_variable_viscosity_flow_jacobian_and_poiseuille():
             mt = asm.momentum_terms(V, param_state=U)
             return asm.K @ V + mt.N + mt.S - B.T @ V + B @ V
 
-        mt = asm.momentum_terms(U)
+        mt = asm.momentum_terms(U, param_state=U)
         J = asm.K + mt.J_N + mt.J_S - B.T + B
         eps = 1e-6
         fd = (residual(U + eps * d) - residual(U - eps * d)) / (2 * eps)

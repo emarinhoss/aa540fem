@@ -25,7 +25,6 @@ import scipy.sparse as sp
 from aa540fem.core.util import values_at, values_rate
 from aa540fem.incompressible.problem import OPEN, FlowProblem, values_at_pair
 from aa540fem.incompressible.space import TaylorHoodSpace, _Block
-from aa540fem.transport.element import supg_length
 
 
 class MomentumTerms(NamedTuple):
@@ -141,8 +140,11 @@ class FlowAssembler:
         residual used by the stabilisation (theta scheme) and select the
         transient ``tau``.  ``stabilise``/``pspg`` override the problem
         settings (the RK45 path passes ``pspg=False``).  The stabilisation
-        parameters ``tau`` and ``gamma`` are evaluated at ``param_state``
-        (default: ``U`` itself) and are not differentiated in the Jacobian.
+        parameters ``tau`` and ``gamma`` are differentiated in the Jacobian
+        (through the velocity magnitude and through the flow-direction
+        dependence of the element length, which matters on stretched cells);
+        with ``param_state`` given they are evaluated at that state and
+        frozen instead.
         """
         prob = self.problem
         stab = prob.stabilisation if stabilise is None else stabilise
@@ -220,11 +222,33 @@ class FlowAssembler:
             safe = np.where(moving, umag, 1.0)
             sx = np.where(moving, upq / safe, 1.0)
             sy = np.where(moving, vpq / safe, 0.0)
-            h = supg_length(sx, sy, b.dphi_dx, b.dphi_dy)
+            sgrad = sx[:, :, None] * b.dphi_dx + sy[:, :, None] * b.dphi_dy
+            h = 2.0 / np.maximum(np.abs(sgrad).sum(axis=2), 1e-300)
             inv_dt2 = (2.0 / dt) ** 2 if dt is not None else 0.0
             tau = 1.0 / np.sqrt(inv_dt2 + (2.0 * umag / h) ** 2 + (4.0 * nu / h ** 2) ** 2)
             re_h = umag * h / (2.0 * nu)
-            gamma = 0.5 * h * umag * np.minimum(1.0, re_h / 3.0) if prob.grad_div else 0.0 * umag
+            low = re_h < 3.0
+            if prob.grad_div:
+                gamma = 0.5 * h * umag * np.minimum(1.0, re_h / 3.0)
+                dgamma_du = 0.5 * h * np.where(low, 2.0 * re_h / 3.0, 1.0)      # d gamma / d|u|
+                dgamma_dh = np.where(low, h * umag ** 2 / (6.0 * nu), 0.5 * umag)  # d gamma / dh
+            else:
+                gamma = dgamma_du = dgamma_dh = 0.0 * umag
+            dtau_du = -(4.0 / h ** 2) * umag * tau ** 3                            # d tau / d|u|
+            dtau_dh = tau ** 3 * (4.0 * umag ** 2 / h ** 3 + 32.0 * nu ** 2 / h ** 5)  # d tau / dh
+            # derivatives of the parameters with respect to the velocity components:
+            # through |u| and through the flow-direction dependence of the element
+            # length h(s), s = u/|u| (unless frozen at a separate state)
+            follow = param_state is None
+            dir_ = (np.where(moving, upq / safe, 0.0), np.where(moving, vpq / safe, 0.0))
+            sgn = np.sign(sgrad)
+            dh_ds = (-0.5 * h ** 2 * np.einsum("eqi,eqi->eq", sgn, b.dphi_dx),
+                     -0.5 * h ** 2 * np.einsum("eqi,eqi->eq", sgn, b.dphi_dy))
+            inv_u = np.where(moving, 1.0 / safe, 0.0)
+            dh_du = ((dh_ds[0] * (1.0 - sx * sx) - dh_ds[1] * sy * sx) * inv_u,
+                     (-dh_ds[0] * sx * sy + dh_ds[1] * (1.0 - sy * sy)) * inv_u)
+            dtau_d = [dtau_du * dir_[d] + dtau_dh * dh_du[d] for d in range(2)]
+            dgamma_d = [dgamma_du * dir_[d] + dgamma_dh * dh_du[d] for d in range(2)]
             dgrad = (b.dphi_dx, b.dphi_dy)
 
             if stab:
@@ -238,18 +262,25 @@ class FlowAssembler:
                         J = (np.einsum("eq,eqi,eqj->eij", wh, w_i, dR[c][d])
                              + np.einsum("eq,eqi,qj->eij", wh * tau * R[c], dgrad[d], b.phi)
                              + np.einsum("eq,eqi,eqj->eij", wh * gamma, dgrad[c], dgrad[d]))
+                        if follow:
+                            J = J + (np.einsum("eq,eqi,qj->eij", wh * R[c] * dtau_d[d],
+                                               ugrad, b.phi)
+                                     + np.einsum("eq,eqi,qj->eij", wh * div * dgamma_d[d],
+                                                 dgrad[c], b.phi))
                         r, cc = self._pair(dofs[c], dofs[d])
                         JS.append((r, cc, J))
                     r, cc = self._pair(dofs[c], pd)
                     JS.append((r, cc, np.einsum("eq,eqi,eqk->eik", wh, w_i, dpsi[c])))
 
             if pspg:
-                Sp = np.einsum("eq,eqk->ek", wh * tau,
-                               dpsi[0] * R[0][:, :, None] + dpsi[1] * R[1][:, :, None])
+                gradR = dpsi[0] * R[0][:, :, None] + dpsi[1] * R[1][:, :, None]
+                Sp = np.einsum("eq,eqk->ek", wh * tau, gradR)
                 np.add.at(S, pd.ravel(), Sp.ravel())
                 for d in range(2):
                     J = (np.einsum("eq,eqk,eqj->ekj", wh * tau, dpsi[0], dR[0][d])
                          + np.einsum("eq,eqk,eqj->ekj", wh * tau, dpsi[1], dR[1][d]))
+                    if follow:
+                        J = J + np.einsum("eq,eqk,qj->ekj", wh * dtau_d[d], gradR, b.phi)
                     r, cc = self._pair(pd, dofs[d])
                     JS.append((r, cc, J))
                 r, cc = self._pair(pd, pd)

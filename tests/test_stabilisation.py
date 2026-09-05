@@ -50,12 +50,43 @@ def test_jacobian_matches_finite_differences_with_frozen_parameters():
             mt = asm.momentum_terms(V, param_state=U)
             return asm.K @ V + mt.N + mt.S - B.T @ V + B @ V
 
-        mt = asm.momentum_terms(U)
+        mt = asm.momentum_terms(U, param_state=U)      # parameters frozen at U
         J = asm.K + mt.J_N + mt.J_S - B.T + B
         eps = 1e-6
         fd = (residual(U + eps * d) - residual(U - eps * d)) / (2 * eps)
         assert np.linalg.norm(J @ d - fd) < 1e-7 * np.linalg.norm(fd)
         assert mt.J_S.nnz > 0 and np.abs(mt.S).max() > 0
+
+
+def test_full_jacobian_with_parameter_derivatives_on_smooth_field():
+    # tau, gamma and the flow-direction element length are differentiated; on a
+    # smooth field (no kinks of |s . grad phi|) the Jacobian is consistent
+    mesh = geometry(2.0, 1.0, 6, "quad9")
+    inflow = lambda x, y: 4 * y * (1 - y)
+    for mu, pspg in ((1e-2, False), (1e-4, False), (1e-4, True)):
+        prob = FlowProblem(mesh, mu=mu, rho=1.0, stabilisation=True, pspg=pspg,
+                           bc={"left": (inflow, 0.0), "top": (0.0, 0.0), "bottom": (0.0, 0.0),
+                               "right": "open"})
+        asm = FlowAssembler(prob)
+        B = asm.Bx + asm.By
+        N = asm.space.N
+        U = np.zeros(asm.space.ndof)
+        U[:N] = inflow(mesh.x, mesh.y) * (1 + 0.2 * np.sin(np.pi * mesh.x))
+        U[N:2 * N] = 0.1 * np.sin(np.pi * mesh.x) * np.sin(np.pi * mesh.y)
+        d = np.zeros_like(U)
+        d[:N] = np.cos(mesh.x) * mesh.y
+        d[N:2 * N] = np.sin(mesh.y) * mesh.x
+        d[2 * N:] = np.cos(mesh.x[asm.space.pressure_nodes])
+
+        def residual(V):
+            mt = asm.momentum_terms(V)
+            return asm.K @ V + mt.N + mt.S - B.T @ V + B @ V
+
+        mt = asm.momentum_terms(U)
+        J = asm.K + mt.J_N + mt.J_S - B.T + B
+        eps = 1e-6
+        fd = (residual(U + eps * d) - residual(U - eps * d)) / (2 * eps)
+        assert np.linalg.norm(J @ d - fd) < 1e-7 * np.linalg.norm(fd)
 
 
 def test_stabilised_kovasznay_keeps_convergence_order():

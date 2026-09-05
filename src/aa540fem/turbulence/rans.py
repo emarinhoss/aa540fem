@@ -108,7 +108,7 @@ def _initial_vector(problem, U0):
 
 def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, verbose,
                 force_tag, U0, nu_tilde0, flow_options=None):
-    flow_options = dict(flow_options or {})
+    flow_options = {"rtol": 1e-5, "atol": 1e-12, **(flow_options or {})}
     U0 = _initial_vector(problem, U0)
     mesh = problem.mesh
     nu = problem.mu / problem.rho
@@ -140,7 +140,7 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
     converged = False
     for k in range(1, max_outer + 1):
         sa.set_velocity(flow.u, flow.v)
-        res = sa.solve(nt, fixed_nodes, fixed_vals, verbose=False)
+        res = sa.solve(nt, fixed_nodes, fixed_vals, rtol=1e-4, verbose=False)
         nt_new = res.T
         nt = relax * nt_new + (1.0 - relax) * nt
         nu_t_new = model.eddy_viscosity(nt)

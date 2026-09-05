@@ -41,7 +41,8 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
     rtol, atol        : stop when ``||R|| <= max(atol, rtol * ||R_0||)``.
     max_newton        : iteration limit.
     damping           : halve the update (up to 5 times) while the residual
-                        does not decrease.
+                        does not decrease; if no reduction is found the
+                        iteration stops at the current iterate (not converged).
     frozen_jacobian   : reuse the factorised Jacobian for the following
                         iterations (modified Newton) as long as each one
                         reduces the residual by at least a factor 3;
@@ -86,9 +87,13 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
         for _ in range(6):
             Tn = T + alpha * delta
             Rn, Jn, rn = evaluate(Tn)
-            if not damping or rn < r or alpha < 1.0 / 16:
+            if not damping or rn < r:
                 break
             alpha *= 0.5
+        else:
+            if verbose:
+                print("  Newton: no descent direction; stopped")
+            break                               # stalled: keep the current (best) iterate
         if frozen_jacobian and rn > r / 3.0:
             solver = None                       # poor contraction: refresh the Jacobian
         T, R, J, r = Tn, Rn, Jn, rn

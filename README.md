@@ -220,8 +220,10 @@ cf = 2 * tr["tx"] / (rho * U**2)              # skin friction distribution
 term through the shape-function Hessians, so it is consistent: Poiseuille
 flow stays exact to round-off) and grad-div stabilisation; `pspg=True` adds
 pressure stabilisation, which Taylor-Hood does not need.  It is off by
-default.  The Jacobian omits the derivatives of the stabilisation
-parameters, which costs Newton its quadratic rate but not its convergence.
+default.  The Jacobian is consistent, including the derivatives of the
+stabilisation parameters and of the flow-direction element length (a
+finite-difference check to 1e-9 is in the tests), which matters on
+stretched boundary-layer cells.
 `continuation="ptc"` (or the `"auto"` fallback) solves backward-Euler
 pseudo-time steps with a few Newton iterations each and grows the step by
 switched evolution relaxation; it is what makes the laminar flat plate at

@@ -79,6 +79,8 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
         if verbose and res is not None:
             print("  Newton did not converge; switching to pseudo-transient continuation")
         path = "ptc" if res is None else "newton+ptc"
+        if res is not None and res.residuals[-1] < res.residuals[0]:
+            U = res.T                           # continue from Newton's best iterate
         M = asm.M
         if local_timestep:
             vel = fixed < 2 * asm.space.N

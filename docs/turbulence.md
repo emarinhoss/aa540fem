@@ -149,9 +149,13 @@ This avoids differentiating `f_w`, `S_tilde` and the negative branch by
 hand (error prone in every published implementation) at the cost of a few
 extra vectorised evaluations per assembly.  With SUPG off the Jacobian
 matches a finite-difference directional derivative to 1e-8 (test); with
-SUPG on the stabilisation parameter is frozen (as in the flow solver), which
-leaves a small inconsistency that slows Newton but does not change the
-converged solution.
+SUPG on the stabilisation parameter of the turbulence equation is frozen,
+which leaves a small inconsistency that slows Newton but does not change
+the converged solution.  (The momentum equations differentiate their
+stabilisation parameters, including the flow-direction dependence of the
+element length, which turned out to be essential on stretched
+boundary-layer cells: there a slight rotation of the velocity collapses
+the streamline length from the cell length to its height.)
 
 ### 3.5 Steady solve: pseudo-transient continuation
 
@@ -223,9 +227,10 @@ added to this section once the validation run of the current revision completes)
 - Wall-resolved only: the first cell must be at `y+` of order one.  Wall
   functions would allow coarser meshes and are a boundary-condition
   addition in `SpalartAllmarasSolver`.
-- The Jacobians freeze the SUPG parameters, and the coupling is segregated
-  with under-relaxation; a monolithic Newton on flow plus turbulence would
-  converge faster but needs the cross-derivatives.
+- The turbulence equation freezes its SUPG parameter in the Jacobian, and
+  the coupling is segregated with under-relaxation; a monolithic Newton on
+  flow plus turbulence would converge faster but needs the
+  cross-derivatives.
 - The direct solver limits the mesh to roughly a hundred thousand
   unknowns; wall-resolved meshes at flight Reynolds numbers need the
   iterative saddle-point solver of the roadmap.

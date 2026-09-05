@@ -10,7 +10,7 @@ from aa540fem.linalg.solvers import LinearSolver
 
 
 def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9, atol=1e-11,
-                     dtau0=0.01, max_steps=200, dtau_max=1e6, inner_newton=6,
+                     dtau0=0.01, max_steps=200, dtau_max=1e6, inner_newton=10,
                      inner_rtol=1e-2, verbose=False) -> NewtonResult:
     """Pseudo-transient continuation: ``R(U) + (M / dtau)(U - U_k) = 0``.
 
@@ -65,9 +65,17 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
             elim = DirichletEliminator((JV + M / dtau).tocsr(), fixed)
             delta, _ = LinearSolver(elim.K_bc, method, symmetric=False).solve(
                 elim.apply_rhs(-G, zero))
-            V = V + delta
-            RV, JV, rV = evaluate(V)
-            if not np.isfinite(rV):
+            alpha = 1.0
+            for _ in range(4):                  # backtracking on the step residual
+                Vn = V + alpha * delta
+                RVn, JVn, rVn = evaluate(Vn)
+                Gn = RVn + M @ ((Vn - U) / dtau)
+                Gn[fixed] = 0.0
+                if np.isfinite(rVn) and np.linalg.norm(Gn) < g:
+                    break
+                alpha *= 0.5
+            V, RV, JV = Vn, RVn, JVn
+            if not np.isfinite(rVn):
                 break
         if not ok:
             retries += 1
