@@ -7,10 +7,25 @@ quadrature points at once.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
 
 from .conductivity_and_forcing import conductivity_and_forcing as _default_material
-from .util import call_xyt
+from .util import accepts_temperature, call_coeff, call_xyt
+
+
+class ElementMatrices(NamedTuple):
+    """Per-element matrices ``(n_elems, n, n)`` and load vectors ``(n_elems, n)``."""
+
+    K: np.ndarray        # diffusion
+    C: np.ndarray        # convection (+ SUPG)
+    M: np.ndarray        # mass (+ SUPG)
+    f: np.ndarray        # source (+ SUPG)
+    dA: np.ndarray | None = None   # Newton terms d(K T - f)/dT beyond K, when T is given
+
+
+FD_STEP = 1e-6
 
 
 def jacobian(x, y, dphi_dxi, dphi_deta):
@@ -147,7 +162,7 @@ def supg_tau(ux, uy, k11, k12, k21, k22, dphi_dx, dphi_dy, dt=None):
 
 
 def elem_operators(x, y, phi, dphi_dxi, dphi_deta, w, material=None, velocity=None,
-                   rho_c=1.0, supg=True, t=0.0, dt=None):
+                   rho_c=1.0, supg=True, t=0.0, dt=None, T=None) -> ElementMatrices:
     """Element matrices of ``rho_c dT/dt + u.grad T - div(kappa grad T) = f``.
 
     Parameters are those of :func:`elem_eqn` plus
@@ -159,9 +174,16 @@ def elem_operators(x, y, phi, dphi_dxi, dphi_deta, w, material=None, velocity=No
                diffusion part of the residual is omitted, which is exact for
                linear elements and a mild inconsistency for quadratic ones.
     dt       : time step, selects the transient form of ``tau``.
+    T        : ``(n_elems, n)`` nodal temperatures.  Coefficients with a
+               parameter named ``T`` are evaluated at the interpolated
+               temperature and, for the material, the Newton terms
+               ``dA = int grad phi_i . (dkappa/dT grad T) phi_j
+               - int phi_i df/dT phi_j`` (plus the SUPG source part) are
+               returned; the derivatives are central finite differences in
+               ``T``.  A temperature-dependent ``velocity``/``rho_c`` is
+               evaluated at ``T`` but not differentiated.
 
-    Returns ``(Ke, Ce, Me, fe)``: diffusion, convection, mass matrices
-    ``(n_elems, n, n)`` and load vectors ``(n_elems, n)``.
+    Returns an :class:`ElementMatrices` tuple ``(K, C, M, f, dA)``.
     """
     if material is None:
         material = _default_material
@@ -176,18 +198,25 @@ def elem_operators(x, y, phi, dphi_dxi, dphi_deta, w, material=None, velocity=No
     X = x @ phi.T
     Y = y @ phi.T
     hs, dphi_dx, dphi_dy = physical_gradients(x, y, dphi_dxi, dphi_deta)
-    k11, k12, k21, k22, f = _broadcast(call_xyt(material, X, Y, t), X.shape)
-    rc = np.broadcast_to(np.asarray(call_xyt(rho_c, X, Y, t) if callable(rho_c) else rho_c,
-                                    dtype=float), X.shape)
+
+    Tq = None
+    if T is not None:
+        T = np.atleast_2d(np.asarray(T, dtype=float))
+        Tq = T @ phi.T                                           # (n_elems, nq)
+
+    k11, k12, k21, k22, f = _broadcast(call_coeff(material, X, Y, t, Tq), X.shape)
+    rc = np.broadcast_to(np.asarray(call_coeff(rho_c, X, Y, t, Tq) if callable(rho_c)
+                                    else rho_c, dtype=float), X.shape)
     wh = w[None, :] * hs
 
     Ke = _diffusion(wh, k11, k12, k21, k22, dphi_dx, dphi_dy)
     Me = np.einsum("eq,qi,qj->eij", wh * rc, phi, phi)
     fe = np.einsum("eq,qi->ei", wh * f, phi)
     Ce = np.zeros_like(Ke)
+    wgt = None
 
     if velocity is not None:
-        ux, uy = _broadcast(call_xyt(velocity, X, Y, t), X.shape)
+        ux, uy = _broadcast(call_coeff(velocity, X, Y, t, Tq), X.shape)
         ugrad = ux[:, :, None] * dphi_dx + uy[:, :, None] * dphi_dy   # u . grad phi_j
         Ce = np.einsum("eq,qi,eqj->eij", wh, phi, ugrad)
         if supg:
@@ -196,4 +225,27 @@ def elem_operators(x, y, phi, dphi_dxi, dphi_deta, w, material=None, velocity=No
             Ce = Ce + np.einsum("eq,eqi,eqj->eij", wh, wgt, ugrad)
             Me = Me + np.einsum("eq,eqi,qj->eij", wh * rc, wgt, phi)
             fe = fe + np.einsum("eq,eqi->ei", wh * f, wgt)
-    return Ke, Ce, Me, fe
+
+    dAe = None
+    if Tq is not None and accepts_temperature(material):
+        dAe = _newton_terms(material, X, Y, t, Tq, T, wh, phi, dphi_dx, dphi_dy, wgt)
+    return ElementMatrices(Ke, Ce, Me, fe, dAe)
+
+
+def _newton_terms(material, X, Y, t, Tq, T, wh, phi, dphi_dx, dphi_dy, wgt):
+    """Derivative of ``K(T) T - f(T)`` with respect to the nodal values beyond ``K``."""
+    delta = FD_STEP * (1.0 + np.abs(Tq))
+    plus = _broadcast(call_coeff(material, X, Y, t, Tq + delta), X.shape)
+    minus = _broadcast(call_coeff(material, X, Y, t, Tq - delta), X.shape)
+    dk11, dk12, dk21, dk22, df = ((a - b) / (2.0 * delta) for a, b in zip(plus, minus))
+
+    gx = np.einsum("eqi,ei->eq", dphi_dx, T)          # grad T at the quadrature points
+    gy = np.einsum("eqi,ei->eq", dphi_dy, T)
+    hx = dk11 * gx + dk12 * gy                        # d(kappa grad T)/dT
+    hy = dk21 * gx + dk22 * gy
+    dA = (np.einsum("eq,eqi,qj->eij", wh, dphi_dx * hx[:, :, None], phi)
+          + np.einsum("eq,eqi,qj->eij", wh, dphi_dy * hy[:, :, None], phi)
+          - np.einsum("eq,qi,qj->eij", wh * df, phi, phi))
+    if wgt is not None:
+        dA = dA - np.einsum("eq,eqi,qj->eij", wh * df, wgt, phi)
+    return dA

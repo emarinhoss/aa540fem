@@ -6,7 +6,9 @@
 The only files that should need editing are this one and
 ``aa540fem/conductivity_and_forcing.py``.  With ``--mesh`` the boundary
 dictionaries below must use the tags (Gmsh physical group names) of that
-file instead of the four sides of the rectangle.
+file instead of the four sides of the rectangle.  Giving the material
+function a parameter named ``T`` makes the conductivity temperature
+dependent; the problem is then solved with Newton's method.
 """
 
 from __future__ import annotations

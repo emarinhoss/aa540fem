@@ -64,11 +64,12 @@ def test_elem_operators_reproduces_elem_eqn(name):
     xe, ye = mesh.x[mesh.conn], mesh.y[mesh.conn]
     material = lambda x, y: (2.0, 0.5, 0.5, 1.0, x + y)
     Ke, fe = elem_eqn(xe, ye, phi, dxi, deta, w, material=material)
-    K2, C2, M2, f2 = elem_operators(xe, ye, phi, dxi, deta, w, material=material)
-    assert np.allclose(Ke, K2)
-    assert np.allclose(fe, f2)
-    assert np.allclose(C2, 0)
-    assert np.all(M2.sum(axis=(1, 2)) > 0)
+    em = elem_operators(xe, ye, phi, dxi, deta, w, material=material)
+    assert np.allclose(Ke, em.K)
+    assert np.allclose(fe, em.f)
+    assert np.allclose(em.C, 0)
+    assert np.all(em.M.sum(axis=(1, 2)) > 0)
+    assert em.dA is None
 
 
 def test_supg_tau_limits():

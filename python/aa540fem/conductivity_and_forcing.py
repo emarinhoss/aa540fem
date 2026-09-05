@@ -18,6 +18,8 @@ def conductivity_and_forcing(x, y):
         div( kappa . grad T ) + f = 0
 
     Each return value may be a scalar or an array broadcastable to ``x``.
+    Add a parameter named ``T`` (``def conductivity_and_forcing(x, y, T)``)
+    for temperature-dependent coefficients, or ``t`` for time dependence.
     """
     kxx = 1.0
     kxy = 0.0

@@ -32,3 +32,4 @@ jobs:
           python scripts/convergence.py --transient --dts 0.02 0.01
           python examples/convection_diffusion.py --no-plot
           python examples/rotating_hill.py --no-plot --steps 100 --series ''
+          python examples/nonlinear_conduction.py --no-plot

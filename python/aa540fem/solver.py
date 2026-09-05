@@ -22,7 +22,7 @@ from .boundary import DirichletEliminator, neumann
 from .element import elem_operators
 from .elements import get_element
 from .geometry import Mesh, geometry
-from .util import accepts_time, values_at
+from .util import accepts_temperature, accepts_time, values_at
 
 DIRICHLET = 0
 NEUMANN = 1
@@ -55,8 +55,9 @@ class Problem:
                 element's ``full_order`` (exact stiffness, mass and
                 convection matrices for constant coefficients); an order
                 below ``min_order`` gives a rank-deficient system.
-    material  : optional callable ``(x, y[, t]) -> (kxx, kxy, kyx, kyy, f)``
-                overriding ``conductivity_and_forcing``.
+    material  : optional callable ``(x, y[, t][, T]) -> (kxx, kxy, kyx, kyy, f)``
+                overriding ``conductivity_and_forcing``.  A parameter named
+                ``T`` makes the problem nonlinear (solved by Newton's method).
     velocity  : optional callable ``(x, y[, t]) -> (ux, uy)`` adding the
                 convection term ``u . grad T``.
     rho_c     : volumetric heat capacity (constant or callable), used by the
@@ -103,6 +104,11 @@ class Problem:
             if tag not in self.bc_val:
                 raise ValueError(f"No boundary value given for tag {tag!r}")
 
+    @property
+    def nonlinear(self) -> bool:
+        """True if a coefficient depends on the temperature."""
+        return any(accepts_temperature(fn) for fn in (self.material, self.velocity, self.rho_c))
+
     def operators_depend_on_time(self) -> bool:
         return any(accepts_time(fn) for fn in (self.material, self.velocity, self.rho_c))
 
@@ -119,11 +125,17 @@ class Operators:
     C: sp.csr_matrix     # convection (+ SUPG)
     M: sp.csr_matrix     # mass (+ SUPG)
     F: np.ndarray        # source (+ SUPG)
+    dA: sp.csr_matrix | None = None   # Newton terms of d(A T - F)/dT beyond A
 
     @property
     def A(self) -> sp.csr_matrix:
         """Steady operator ``K + C``."""
         return (self.K + self.C).tocsr()
+
+    @property
+    def J(self) -> sp.csr_matrix:
+        """Jacobian of the steady residual ``A(T) T - F(T)``."""
+        return self.A if self.dA is None else (self.A + self.dA).tocsr()
 
 
 @dataclass
@@ -159,18 +171,21 @@ class Solution:
 
 # ------------------------------------------------------------------ assembly
 def assemble_operators(mesh: Mesh, problem: Problem, t: float = 0.0, dt=None,
-                       verbose: bool = False) -> Operators:
+                       T=None, verbose: bool = False) -> Operators:
     """Assemble diffusion, convection and mass matrices and the load vector.
 
     Every cell block of the mesh is integrated with its own element;
     ``problem.order`` applies to all blocks and ``None`` uses each element's
-    ``full_order``.  ``t`` is passed to time-dependent coefficients and
-    ``dt`` selects the transient SUPG parameter.
+    ``full_order``.  ``t`` is passed to time-dependent coefficients, ``dt``
+    selects the transient SUPG parameter and ``T`` (nodal values) is needed
+    for temperature-dependent coefficients; it also fills ``Operators.dA``.
     """
     N = mesh.n_nodes
     rows, cols = [], []
-    kv, cv, mv = [], [], []
+    kv, cv, mv, dv = [], [], [], []
     F = np.zeros(N)
+    if T is not None:
+        T = np.asarray(T, dtype=float)
 
     for name, conn in mesh.cells.items():
         el = get_element(name)
@@ -183,18 +198,19 @@ def assemble_operators(mesh: Mesh, problem: Problem, t: float = 0.0, dt=None,
         xi, eta, w = el.quadrature(o)
         phi, dphi_dxi, dphi_deta = el.shape(xi, eta)
 
-        Ke, Ce, Me, fe = elem_operators(
+        em = elem_operators(
             mesh.x[conn], mesh.y[conn], phi, dphi_dxi, dphi_deta, w,
             material=problem.material, velocity=problem.velocity, rho_c=problem.rho_c,
-            supg=problem.supg, t=t, dt=dt)
+            supg=problem.supg, t=t, dt=dt, T=None if T is None else T[conn])
 
         n = el.n_nodes
         rows.append(np.repeat(conn, n, axis=1).ravel())   # conn[e, i] for each j
         cols.append(np.tile(conn, (1, n)).ravel())        # conn[e, j] for each i
-        kv.append(Ke.ravel())
-        cv.append(Ce.ravel())
-        mv.append(Me.ravel())
-        np.add.at(F, conn.ravel(), fe.ravel())
+        kv.append(em.K.ravel())
+        cv.append(em.C.ravel())
+        mv.append(em.M.ravel())
+        dv.append(np.zeros(em.K.size) if em.dA is None else em.dA.ravel())
+        np.add.at(F, conn.ravel(), em.f.ravel())
 
     rows = np.concatenate(rows)
     cols = np.concatenate(cols)
@@ -204,7 +220,8 @@ def assemble_operators(mesh: Mesh, problem: Problem, t: float = 0.0, dt=None,
         m.eliminate_zeros()
         return m
 
-    ops = Operators(mat(kv), mat(cv), mat(mv), F)
+    dA = mat(dv) if T is not None and problem.nonlinear else None
+    ops = Operators(mat(kv), mat(cv), mat(mv), F, dA)
     if verbose:
         print("Finished Assembling Global Stiffness Matrix.")
     return ops
@@ -330,13 +347,24 @@ class LinearSolver:
 
 
 def solve(problem: Problem, verbose: bool = False, method: str = "direct",
-          tol: float = 1e-10, maxiter: int | None = None) -> Solution:
+          tol: float = 1e-10, maxiter: int | None = None, **newton_options) -> Solution:
     """Mesh, assemble, apply boundary conditions and solve the steady problem.
 
     ``method`` is ``"direct"`` (sparse LU), ``"cg"`` (conjugate gradients,
     symmetric problems only) or ``"gmres"``; both Krylov methods use pyamg
-    preconditioning when it is installed.
+    preconditioning when it is installed.  A nonlinear problem (a coefficient
+    depending on ``T``) is handed to :func:`aa540fem.nonlinear.solve_nonlinear`,
+    which accepts the extra ``newton_options`` (``T0``, ``newton``, ``rtol``,
+    ``atol``, ``max_newton``).
     """
+    if problem.nonlinear:
+        from .nonlinear import solve_nonlinear
+
+        return solve_nonlinear(problem, verbose=verbose, method=method, tol=tol,
+                               maxiter=maxiter, **newton_options)
+    if newton_options:
+        raise TypeError(f"unexpected arguments for a linear problem: {sorted(newton_options)}")
+
     mesh = problem.build_mesh()
     problem.validate(mesh)
     if not problem.has_dirichlet():

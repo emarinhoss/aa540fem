@@ -12,6 +12,7 @@ import numpy as np
 
 from .boundary import DirichletEliminator
 from .geometry import Mesh
+from .nonlinear import newton_iterate
 from .solver import LinearSolver, Problem, assemble_operators, dirichlet_data, neumann_loads
 from .util import values_at
 
@@ -66,13 +67,15 @@ class TransientSolution:
 
 def solve_transient(problem: Problem, dt: float, t_end: float, theta: float = 1.0,
                     T0=0.0, method: str = "direct", tol: float = 1e-10, maxiter=None,
-                    store_every: int = 1, verbose: bool = False) -> TransientSolution:
+                    store_every: int = 1, verbose: bool = False,
+                    **newton_options) -> TransientSolution:
     """Integrate the transient problem from ``t = 0`` to ``t_end``.
 
     Parameters
     ----------
     problem     : :class:`Problem`; ``rho_c``, ``material``, ``velocity`` and
-                  the boundary values may take a third argument ``t``.
+                  the boundary values may take a third argument ``t``, and
+                  coefficients may depend on ``T`` (Newton at every step).
     dt, t_end   : time step (must divide ``t_end``) and final time.
     theta       : 1 backward Euler (first order, unconditionally stable),
                   0.5 Crank-Nicolson (second order).
@@ -82,6 +85,8 @@ def solve_transient(problem: Problem, dt: float, t_end: float, theta: float = 1.
                   (or its preconditioner built) once.
     store_every : keep every n-th step (the initial and final fields are
                   always stored).
+    newton_options : ``rtol``, ``atol``, ``max_newton``, ``damping`` for the
+                  nonlinear case (see :func:`aa540fem.nonlinear.newton_iterate`).
     """
     if not 0.0 <= theta <= 1.0:
         raise ValueError("theta must be in [0, 1]")
@@ -93,6 +98,12 @@ def solve_transient(problem: Problem, dt: float, t_end: float, theta: float = 1.
     problem.validate(mesh)
     if verbose:
         print(f"Finished generating Grid: {mesh.n_nodes} nodes, {mesh.n_elems} elements.")
+
+    if problem.nonlinear:
+        return _solve_transient_nonlinear(problem, mesh, dt, nsteps, theta, T0, method, tol,
+                                          maxiter, store_every, verbose, newton_options)
+    if newton_options:
+        raise TypeError(f"unexpected arguments for a linear problem: {sorted(newton_options)}")
 
     ops_time = problem.operators_depend_on_time()
     loads_time = problem.loads_depend_on_time()
@@ -151,4 +162,71 @@ def solve_transient(problem: Problem, dt: float, t_end: float, theta: float = 1.
     info = {"method": method, "steps": nsteps, "dt": dt, "theta": theta}
     if iterations:
         info["iterations"] = iterations
+    return TransientSolution(mesh, np.asarray(times), snapshots, problem, info)
+
+
+def _solve_transient_nonlinear(problem, mesh, dt, nsteps, theta, T0, method, tol, maxiter,
+                               store_every, verbose, newton_options):
+    """theta-method with a Newton solve at every step (temperature-dependent data).
+
+    Residual at the new time level::
+
+        M(T)(T - T_n)/dt + theta [A(T) T - F(T) - F_neu]
+                         + (1 - theta) [A(T_n) T_n - F(T_n) - F_neu_n]
+
+    with Jacobian ``M/dt + theta (A + dA)``.
+    """
+    options = {"rtol": 1e-8, "atol": 1e-10, "max_newton": 25, "damping": True}
+    options.update(newton_options)
+
+    def loads(t):
+        return neumann_loads(mesh, np.zeros(mesh.n_nodes), problem.bc_type, problem.bc_val, t)
+
+    nodes, vals = dirichlet_data(mesh, problem.bc_type, problem.bc_val, 0.0)
+    T = values_at(T0, mesh.x, mesh.y)
+    T[nodes] = vals
+    ops = assemble_operators(mesh, problem, t=0.0, dt=dt, T=T)
+    explicit = ops.A @ T - ops.F - loads(0.0)
+
+    times = [0.0]
+    snapshots = [T.copy()]
+    newton_iterations = []
+    if verbose:
+        print(f"Time stepping (Newton): {nsteps} steps of dt = {dt} (theta = {theta})")
+
+    for n in range(1, nsteps + 1):
+        t = n * dt
+        F_neu = loads(t)
+        _, vals = dirichlet_data(mesh, problem.bc_type, problem.bc_val, t)
+        T_old = T
+        last = {}
+
+        def residual_jacobian(Tn, T_old=T_old, t=t, F_neu=F_neu, explicit=explicit, last=last):
+            ops = assemble_operators(mesh, problem, t=t, dt=dt, T=Tn)
+            last["ops"] = ops
+            R = ops.M @ ((Tn - T_old) / dt) + theta * (ops.A @ Tn - ops.F - F_neu) \
+                + (1.0 - theta) * explicit
+            J = (ops.M / dt + theta * ops.J).tocsr()
+            return R, J
+
+        guess = T_old.copy()
+        guess[nodes] = vals
+        res = newton_iterate(residual_jacobian, guess, nodes, method, tol, maxiter,
+                             verbose=False, **options)
+        if not res.converged:
+            raise RuntimeError(f"Newton did not converge at t = {t:.6g} "
+                               f"(|R| = {res.residuals[-1]:.2e} after {res.iterations} steps)")
+        T = res.T
+        ops = last["ops"]
+        explicit = ops.A @ T - ops.F - F_neu
+        newton_iterations.append(res.iterations)
+        if n % store_every == 0 or n == nsteps:
+            times.append(t)
+            snapshots.append(T.copy())
+        if verbose and (n % max(1, nsteps // 10) == 0 or n == nsteps):
+            print(f"  step {n}/{nsteps}, t = {t:.6g}, T in [{T.min():.6g}, {T.max():.6g}], "
+                  f"{res.iterations} Newton iterations")
+
+    info = {"method": method, "steps": nsteps, "dt": dt, "theta": theta,
+            "nonlinear": "newton", "newton_iterations": newton_iterations}
     return TransientSolution(mesh, np.asarray(times), snapshots, problem, info)

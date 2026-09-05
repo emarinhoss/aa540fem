@@ -7,8 +7,9 @@ scalar transport equation
     rho_c dT/dt + u . grad T - div( kappa(x, y) . grad T ) = f(x, y)
 
 Without a velocity and time derivative this is the original
-`div(kappa grad T) + f = 0`.  `kappa` is a full 2x2 conductivity tensor,
-`u` an optional velocity field (with SUPG stabilisation), and the
+`div(kappa grad T) + f = 0`.  `kappa` is a full 2x2 conductivity tensor
+that may depend on `T` (solved with Newton's method), `u` an optional
+velocity field (with SUPG stabilisation), and the
 boundaries carry Dirichlet (`T = T0`) or Neumann (`n . kappa grad T = q_n`)
 conditions by name.  Elements are 3- and 6-node triangles or 4- and 9-node
 quadrilaterals, on the built-in structured rectangle or on any mesh read
@@ -37,6 +38,7 @@ python main.py --method cg --vtk out.vtu
 python examples/annulus.py              # curved annulus mesh, exact solution ln(r)/ln(2)
 python examples/convection_diffusion.py # Galerkin vs SUPG on a boundary layer
 python examples/rotating_hill.py        # transient advection, writes a ParaView series
+python examples/nonlinear_conduction.py # kappa(T) = 1 + beta T, Newton vs Picard
 python scripts/convergence.py           # mesh-convergence study, prints observed orders
 python scripts/convergence.py --transient   # temporal orders of backward Euler / Crank-Nicolson
 python -m pytest                        # verification suite
@@ -95,9 +97,32 @@ result.snapshot(0.5)        # stored field closest to t = 0.5
 result.save_series("out/run")   # out/run_0000.vtu ... + out/run.pvd for ParaView
 ```
 
+### Temperature-dependent coefficients
+
+```python
+def material(x, y, T):                  # a parameter named T makes the problem nonlinear
+    k = 1.0 + 0.5 * T
+    return k, 0.0, 0.0, k, 0.0
+
+problem = Problem(a=1, b=1, elems=8, elem_type="quad9",
+                  bc_type={"left": 0, "right": 0}, bc_val={"left": 0.0, "right": 1.0},
+                  material=material)
+sol = solve(problem)                    # Newton; sol.info["residuals"] holds |R| per iteration
+sol = solve(problem, newton=False)      # Picard (fixed point) iteration
+result = solve_transient(problem, dt=0.1, t_end=2.0, theta=0.5)   # Newton at every step
+```
+
+The Jacobian carries the derivatives of `kappa` and `f` with respect to
+`T` (central finite differences at the quadrature points), so convergence
+is quadratic; the source may depend on `T` too (`f = g - T**3`).  A
+temperature-dependent `velocity` or `rho_c` is evaluated at the current
+`T` but not differentiated.  Newton systems are non-symmetric: use
+`method="direct"` or `"gmres"`.
+
 `material`, `velocity`, `rho_c` and the boundary values may take a third
-argument `t` (`lambda x, y, t: ...`); the solver then re-evaluates them each
-step.  With time-independent coefficients the system matrix is factorised
+argument `t` (`lambda x, y, t: ...`); parameters are matched by name, so
+`def material(x, y, T, t)` gets both.  The solver re-evaluates
+time-dependent data each step.  With time-independent coefficients the system matrix is factorised
 once.  The SUPG parameter is the classic `tau = h/(2|u|) (coth Pe - 1/Pe)`
 for steady problems and the transient form
 `tau = [(2/dt)^2 + (2|u|/h)^2 + (4 kappa/h^2)^2]^(-1/2)` in time stepping;
@@ -128,7 +153,8 @@ read and unused nodes are dropped.
 | `aa540fem/boundary.py`              | Dirichlet elimination, Neumann edge integrals         | `dirichlet.m` |
 | `aa540fem/solver.py`                | `Problem`, operator assembly, direct / CG / GMRES     | `main.m`      |
 | `aa540fem/transient.py`             | theta-method time stepping, ParaView series output    | (new)         |
-| `aa540fem/util.py`                  | time-argument detection for user callables            | (new)         |
+| `aa540fem/nonlinear.py`             | damped Newton / Picard iteration                      | (new)         |
+| `aa540fem/util.py`                  | `t` / `T` argument matching for user callables        | (new)         |
 | `aa540fem/postprocess.py`           | Centroid gradients and fluxes, L2/H1 error norms      | (new)         |
 | `aa540fem/conductivity_and_forcing.py` | User material and source                           | `conductivity_and_forcing.m` |
 | `main.py`                           | Driver with the user inputs                           | `main.m`      |
@@ -142,8 +168,12 @@ boundary detection, exact reproduction of linear and quadratic fields with
 anisotropic conductivity and mixed boundary conditions, the Gmsh annulus
 with curved elements, CG/GMRES against the direct solver, VTK round trips,
 mass and convection operators, SUPG (nodally exact boundary layer, bounded
-skew advection), a decaying mode and a transient manufactured solution with
-convection and time-dependent Dirichlet data.
+skew advection), a decaying mode, a transient manufactured solution with
+convection and time-dependent Dirichlet data, and nonlinear cases: the
+Kirchhoff problem `kappa = 1 + T` against its exact solution (Newton
+converging quadratically in a handful of iterations, Picard needing more),
+manufactured solutions with `kappa = 1 + T^2` and a `T^3` source, with
+convection, and in time.
 `scripts/convergence.py` on the manufactured solution
 `T = sin(pi x/a) sin(pi y/b)` gives the expected orders:
 
@@ -187,16 +217,18 @@ problems found while translating it:
   share a node the last listed tag wins consistently (the MATLAB code mixed
   both values at corners).
 * The global system is a SciPy sparse matrix and can be solved iteratively.
-* **Convection and time** are new: the MATLAB code was steady diffusion only.
+* **Convection, time and nonlinear conductivity** are new: the MATLAB code
+  was steady linear diffusion only.
 
 ## Roadmap toward flow simulation
 
 Done: the infrastructure (elements, unstructured meshes, output, solvers,
-CI), transient conduction (mass matrix, theta-method) and
-convection-diffusion with SUPG stabilisation, which is the scalar prototype
-of a flow solver.  Next, in order: nonlinear conductivity `kappa(T)`
-(Newton), incompressible Navier-Stokes (Taylor-Hood or PSPG), then
-compressible flow, where a finite-volume or discontinuous Galerkin
-discretisation replaces continuous Galerkin.  Aircraft-scale RANS cases are
+CI), transient conduction (mass matrix, theta-method), convection-diffusion
+with SUPG stabilisation (the scalar prototype of a flow solver) and
+nonlinear coefficients with Newton's method (the prototype of the nonlinear
+solve every flow solver needs).  Next: incompressible Navier-Stokes
+(Taylor-Hood or PSPG, Newton on the convective term), then compressible
+flow, where a finite-volume or discontinuous Galerkin discretisation
+replaces continuous Galerkin.  Aircraft-scale RANS cases are
 better run in an established solver such as SU2; this code is the place to
 understand what such a solver does.
