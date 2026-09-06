@@ -128,7 +128,7 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
             vel = fixed < asm.space.n_vel
             u_ref = max(float(np.abs(vals[vel]).max()) if vel.any() else 0.0, 1e-3)
             scale = local_pseudo_time_scaling(asm.mesh, problem.mu / problem.rho, u_ref)
-            inv = np.concatenate([1.0 / scale, 1.0 / scale, np.ones(asm.space.Np)])
+            inv = np.concatenate([1.0 / scale] * asm.space.dim + [np.ones(asm.space.Np)])
             M = asm.pattern.matrix(asm.M_data * inv[asm.pattern.rows])   # row scaling
         res = pseudo_transient(residual_jacobian, U, fixed, M, method, rtol, atol, dtau0,
                                max_ptc, verbose=verbose, residual=residual)

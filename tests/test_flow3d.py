@@ -149,3 +149,11 @@ def test_eliminated_system_size_and_save(tmp_path):
 
     m = meshio.read(out)
     assert m.points.shape == (27, 3) and m.point_data["velocity"].shape == (27, 3)
+
+
+def test_pseudo_transient_continuation_in_3d():
+    prob = channel("tetra10", elems=(2, 2, 1), stabilisation=True)
+    sol = solve_flow(prob, continuation="ptc", rtol=1e-8)
+    u, _ = exact(prob.mesh)
+    assert sol.info["converged"] and sol.info["continuation"] == "ptc"
+    assert np.abs(sol.u - u).max() < 1e-6
