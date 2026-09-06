@@ -388,23 +388,26 @@ continuation from rest in 10 steps, 30 s) gives a skin friction within 5 %
 of Blasius for 1e4 < Re_x < 1e5 (mean 2.7 %) and velocity profiles within
 0.014 of the similarity solution at three stations; near the leading edge
 the Navier-Stokes skin friction exceeds Blasius, as it should.  The cylinder at
-Re = 100 (`examples/cylinder_shedding.py`, stabilised Crank-Nicolson,
-dt = 0.005) sheds vortices with, on the standard mesh (`cylinder_bl.msh`,
-10.8k nodes, 19 minutes with numba and MUMPS, over an hour with NumPy and
-SuperLU) and on a twice-finer one (`--mesh examples/meshes/cylinder_bl_fine.msh`,
-41k nodes, 74 minutes),
+Re = 100 (`examples/cylinder_shedding.py`, stabilised Crank-Nicolson)
+sheds vortices with, on the standard mesh (`cylinder_bl.msh`, 10.8k nodes,
+dt = 0.005: 19 minutes with numba and MUMPS, over an hour with NumPy and
+SuperLU), with the time step halved (`--dt 0.0025`, 29 minutes) and on a
+twice-finer mesh (`--mesh examples/meshes/cylinder_bl_fine.msh`, 41k nodes,
+74 minutes),
 
-| Schaefer-Turek 2D-2 | 10.8k nodes | 41k nodes | reference |
-|---------------------|-------------|-----------|-----------|
-| Strouhal number     | 0.3013      | 0.3014    | 0.2995    |
-| C_D,max             | 3.2303      | 3.2320    | 3.2298    |
-| C_L,max             | 0.9958      | 0.9972    | 1.0002    |
+| Schaefer-Turek 2D-2 | 10.8k nodes, dt 0.005 | 10.8k nodes, dt 0.0025 | 41k nodes, dt 0.005 | reference |
+|---------------------|--------|--------|--------|--------|
+| Strouhal number     | 0.3013 | 0.3016 | 0.3014 | 0.2995 |
+| C_D,max             | 3.2303 | 3.2271 | 3.2320 | 3.2298 |
+| C_L,max             | 0.9958 | 0.9885 | 0.9972 | 1.0002 |
 
-Both meshes are inside the intervals of Schaefer and Turek (St 0.295 to
-0.305, C_D,max 3.22 to 3.24, C_L,max 0.99 to 1.01); refining the mesh
-moves C_L,max towards the reference and leaves the Strouhal number
-unchanged, so the remaining 0.6 % in St is the time step rather than the
-mesh.
+All three runs are inside the intervals of Schaefer and Turek (St 0.295 to
+0.305, C_D,max 3.22 to 3.24, C_L,max 0.99 to 1.01) and periodic from
+t = 6 on.  Halving the time step changes the force maxima by 0.3 to 0.7 %
+and the mesh refinement by 0.05 to 0.15 %, while the Strouhal number moves
+by less than 0.1 % under either, so the 0.6 % between the computed St and
+the reference is a property of the discretisation as run (the
+stabilisation terms and the open outlet), not of the resolution.
 
 The airfoil case at Re = 1000 has no
 exact reference; `examples/airfoil.py` on its 15k-node mesh (dt = 0.05,
