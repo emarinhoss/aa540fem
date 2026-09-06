@@ -389,7 +389,8 @@ of Blasius for 1e4 < Re_x < 1e5 (mean 2.7 %) and velocity profiles within
 0.014 of the similarity solution at three stations; near the leading edge
 the Navier-Stokes skin friction exceeds Blasius, as it should.  The cylinder at
 Re = 100 (`examples/cylinder_shedding.py`, stabilised Crank-Nicolson,
-dt = 0.005, about an hour) sheds vortices with
+dt = 0.005, 19 minutes with numba and MUMPS, over an hour with NumPy and
+SuperLU) sheds vortices with
 
 | Schaefer-Turek 2D-2 | computed | reference |
 |---------------------|----------|-----------|

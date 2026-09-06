@@ -91,3 +91,10 @@ process) and, in the theta scheme, the per-step refactorisation; the
 Krylov path (`solve_flow(method="fieldsplit")`) removes the factorisation
 at the price of iterations that grow with the Reynolds number.
 
+### Validation cases with the final defaults (numba, MUMPS, one process)
+
+| case | before | after | result |
+|---|---|---|---|
+| turbulent flat plate, Re 1e6 (`turbulent_flat_plate.py`) | 9 min | 4 min | Cf 0.00327 vs Coles-Fernholz 0.00323, unchanged |
+| cylinder shedding, 1600 theta steps (`cylinder_shedding.py`) | 77 min | 19 min | St 0.3013, C_D,max 3.2303, C_L,max 0.9958, unchanged |
+
