@@ -315,11 +315,12 @@ trial points), runs the element kernels in numba threads and factorises
 with MUMPS when PETSc is installed.  Wall times on a 4-core machine
 (details in [`docs/performance.md`](docs/performance.md)):
 
-| case | before | after |
-|---|---|---|
-| theta scheme, 20 steps, cylinder mesh | 73 s | 29 s (SuperLU) |
-| RK45, 20 steps, cylinder mesh | 44 s | 7 s |
-| steady Newton, cylinder mesh | 9.1 s | 9.6 s (factorisation-bound; MUMPS lifts this) |
+| case | before | numba + SuperLU | numba + PETSc/MUMPS |
+|---|---|---|---|
+| steady Newton, cylinder mesh, 6 iterations | 9.1 s | 9.6 s | 4.8 s |
+| theta scheme, 20 steps, cylinder mesh | 73 s | 29 s | 18 s |
+| RK45, 20 steps, cylinder mesh | 44 s | 7.2 s | 3.2 s |
+| RANS coupling, 2 outer iterations, plate mesh | 33 s | 26 s | 17 s |
 
 [`docs/parallel.md`](docs/parallel.md) explains which option fits which
 machine, and what the MPI (`aa540fem.parallel`, replicated assembly with a

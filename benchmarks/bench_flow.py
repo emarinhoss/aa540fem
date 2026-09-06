@@ -35,8 +35,8 @@ MESHES = ROOT / "examples" / "meshes"
 CATEGORIES = (
     ("assembly", r"momentum_terms|_linear_matrices|residual_jacobian\b.*spalart|numba_kernels|"
                  r"numpy_kernels|ScatterPlan|scatter"),
-    ("factorise", r"gstrf|splu|factorise|Factorisation|_petsc.*factor|setUp"),
-    ("solve", r"SuperLU.*solve|_superlu_solve|\.solve\b.*(SuperLU|PETSc|Factor)|KSP.*solve"),
+    ("factorise", r"gstrf|splu|direct\.py:(__init__|factorise)|distributed\.py:__init__"),
+    ("solve", r"SuperLU.*solve|direct\.py:solve|distributed\.py:solve|krylov\.py:solve"),
 )
 
 

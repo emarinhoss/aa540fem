@@ -101,8 +101,13 @@ class PETScFactorisation:
         opts = PETSc.Options()
         if solver_type == "mumps":
             opts["mat_mumps_icntl_14"] = 40          # 40 % extra workspace for the pivoting
+            # MUMPS OpenMP threads need a PETSc built --with-openmp; the BLAS
+            # threads apply regardless, so the option is tried and dropped
+            # when the build lacks it
             if threads and threads > 1:
                 opts["mat_mumps_use_omp_threads"] = int(threads)
+            else:
+                opts.delValue("mat_mumps_use_omp_threads")
         comm = PETSc.COMM_SELF
         self.A = PETSc.Mat().createAIJ(size=(self.n, self.n),
                                        csr=(A.indptr.astype(PETSc.IntType),
@@ -115,7 +120,14 @@ class PETScFactorisation:
         pc.setType("lu")
         pc.setFactorSolverType(solver_type)
         self.ksp.setFromOptions()
-        pc.setUp()
+        try:
+            pc.setUp()
+        except PETSc.Error:
+            if not (threads and threads > 1):
+                raise
+            opts.delValue("mat_mumps_use_omp_threads")
+            pc.setFromOptions()
+            pc.setUp()
         self._x = self.A.createVecRight()
         self._b = self.A.createVecRight()
         try:
