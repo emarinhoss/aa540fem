@@ -246,7 +246,7 @@ intervals of Schaefer and Turek (1996):
 
 | mesh (unknowns) | solver | wall | C_D | C_L | dp |
 |---|---|---|---|---|---|
-| `cyl3d_coarse.msh` (81k) | MUMPS / fieldsplit-LSC | 268 s / 235 s | 6.240 | -0.016 | 0.1758 |
+| `cyl3d_coarse.msh` (81k) | MUMPS / fieldsplit-LSC / 4-rank domain decomposition | 268 s / 235 s / 97 s | 6.240 | -0.016 | 0.1758 |
 | `cylinder3d_tet10.msh` (132k) | MUMPS, 6 GB | 592 s | 6.227 | 0.014 | 0.1742 |
 | `cyl3d_fine2.msh` (227k) | fieldsplit-LSC, 8 GB | 992 s | 6.207 | 0.014 | 0.1718 |
 | reference (interval) | | | 6.185 (6.05-6.25) | 0.0094 (0.008-0.010) | 0.1710 (0.165-0.175) |
@@ -261,6 +261,23 @@ have (refining the cylinder surface alone while coarsening the channel,
 walls and the wake set the drag).  The direct solver and the Krylov
 solver give identical numbers; the Krylov path is the one that fits the
 227k case in memory.
+
+**Lid-driven cube** (`examples/cavity3d.py`, Re 100, hexahedron27, lid
+``u = 1`` at y = 1).  Extrema of the centreline velocities on successive
+meshes (nodal values, so the positions are quantised to the node spacing):
+
+| cells per side (unknowns) | u_min on x = z = 0.5 (at y) | v_max on y = z = 0.5 (at x) | v_min (at x) | wall |
+|---|---|---|---|---|
+| 8 (15k) | -0.1663 (0.500) | 0.1217 (0.250) | -0.2053 (0.812) | 37 s |
+| 12 (49k) | -0.1834 (0.458) | 0.1337 (0.208) | -0.2162 (0.833) | 248 s |
+| 16 (113k) | -0.1917 (0.469) | 0.1384 (0.219) | -0.2263 (0.812) | 1298 s |
+
+The changes halve with each refinement (second order in the cell size), so
+the converged extrema are about -0.20, 0.14 and -0.24.  The published
+tables of Ku, Hirsh and Taylor (1987), Wong and Baker (2002) and
+Albensoeder and Kuhlmann (2005) could not be retrieved from this
+environment, so the quantitative comparison for this case is still open;
+the profiles are written to `centreline_<n>.csv` for it.
 
 ### High Reynolds numbers: stabilisation and continuation
 

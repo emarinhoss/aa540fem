@@ -182,6 +182,7 @@ theta distributed fieldsplit       4      6.96  9 factorisations, |dU|/|U| = 9e-
 |---|---|---|---|---|---|---|---|---|
 | `cyl3d_coarse.msh` | 81k | MUMPS | 7 | 268 s | 4.0 GB | 6.2397 | -0.0164 | 0.1758 |
 | `cyl3d_coarse.msh` | 81k | fieldsplit / LSC, ILU(1) | 7 | 235 s | 3.1 GB | 6.2397 | -0.0164 | 0.1758 |
+| `cyl3d_coarse.msh` | 81k | 4 MPI ranks x 1 thread, domain decomposition, MUMPS (`--distributed`) | 7 | 97 s | | 6.2397 | -0.0164 | 0.1758 |
 | `cylinder3d_tet10.msh` | 132k | MUMPS | 7 | 592 s | 6.6 GB | 6.2273 | 0.0141 | 0.1742 |
 | `cyl3d_bl.msh` (cylinder refined, channel coarsened) | 99k | MUMPS, Newton then PTC | 6 | 492 s | | 6.3770 | 0.0540 | 0.1806 |
 | `cyl3d_fine2.msh` | 227k | fieldsplit / LSC, ILU(1) | 7 | 992 s | 8.5 GB | 6.2073 | 0.0138 | 0.1718 |
@@ -191,6 +192,11 @@ Newton iteration (about 40 s of the 38 s per iteration at 81k unknowns,
 80 s at 132k) and its memory grows faster than the problem (4.0, 6.6 GB);
 the Krylov solver takes about the same time per iteration and less memory,
 and is the only option here beyond 150k unknowns on this 15 GB machine.
+The domain decomposition on four ranks solves the 81k case in 97 s against
+268 s for one process with four threads: in 3-D the per-rank assembly and
+the distributed factorisation both gain, and `mpirun -n 4 python
+examples/cylinder3d.py --distributed --threads 1` is the way to run these
+cases on one machine.
 Newton from the Stokes start needs heavy damping on the first steps and
 on the cylinder-refined mesh stalls, where the pseudo-transient
 continuation takes over (three steps to |R| = 1e-5, then Newton).
