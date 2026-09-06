@@ -112,8 +112,10 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
         if verbose and res is not None:
             print("  Newton did not converge; switching to pseudo-transient continuation")
         path = "ptc" if res is None else "newton+ptc"
-        if res is not None and res.residuals[-1] < res.residuals[0]:
-            U = res.T                           # continue from Newton's best iterate
+        if res is not None and res.residuals[-1] < 0.5 * res.residuals[0]:
+            U = res.T       # continue from Newton's best iterate if it got somewhere;
+            #                 heavily damped steps that barely reduced the residual
+            #                 are a worse start than the initial state
         U = project_divergence_free(asm, U, fixed, vals)
         M = asm.M
         if local_timestep:

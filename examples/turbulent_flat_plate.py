@@ -94,13 +94,15 @@ def main(argv=None):
                         help="laminar-viscosity factors of the start-up continuation")
     parser.add_argument("--outdir", default="turb_plate_out")
     parser.add_argument("--no-plot", action="store_true")
+    parser.add_argument("-v", "--verbose", action="count", default=1,
+                        help="-v: outer iterations (default), -vv: also the sub-solves")
     args = parser.parse_args(argv)
     outdir = pathlib.Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
-    rans, res = run(args.mesh, args.re, max_outer=args.max_outer, tol=args.tol,
-                    viscosity_ramp=tuple(args.viscosity_ramp))
+    rans, res = run(args.mesh, args.re, verbose=args.verbose, max_outer=args.max_outer,
+                    tol=args.tol, viscosity_ramp=tuple(args.viscosity_ramp))
     print(f"RANS: {len(rans.history)} outer iterations, converged = {rans.converged}, "
           f"{time.time() - t0:.0f} s")
     rex, cf = res["Re_x"], res["Cf"]
