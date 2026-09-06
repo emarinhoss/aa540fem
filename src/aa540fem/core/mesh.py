@@ -15,7 +15,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from aa540fem.core.elements import ELEMENTS, FACE_CORNERS, FACE_ELEMENTS, FACE_TYPES, get_element
+from aa540fem.core.elements import (
+    ELEMENTS,
+    FACE_CORNERS,
+    FACE_ELEMENTS,
+    FACE_TYPES,
+    get_element,
+)
+from aa540fem.core.shape_functions import WEDGE18_PAIRS
 
 SIDES = ("top", "right", "left", "bottom")
 BOX_SIDES = ("left", "right", "bottom", "top", "front", "back")     # x=0, x=a, y=0, y=b, z=0, z=c
@@ -34,7 +41,9 @@ class Mesh:
     boundary : dict tag -> ``(n_faces, k)`` boundary faces: in 2D edges
                ordered ``(start, end[, mid])`` with the domain on the left,
                in 3D triangles or quadrilaterals (``k`` = 3, 6, 4 or 9) in the
-               face element's ordering with the outward normal.
+               face element's ordering with the outward normal; a 3-D tag with
+               both face types (prisms) holds a dict face type -> array, see
+               :meth:`face_blocks`.
     X, Y, nx, ny : grid form of the coordinates, only for structured 2-D meshes.
     """
 
@@ -62,9 +71,13 @@ class Mesh:
         if dims and dims != {self.points.shape[1]}:
             raise ValueError(f"{dims.pop()}-D cells need points with that many coordinates")
         empty = np.zeros((0, 2 if self.dim == 2 else 3), dtype=int)
-        self.boundary = {tag: np.asarray(e, dtype=int).reshape(-1, np.asarray(e).shape[-1])
-                         if np.asarray(e).size else empty
-                         for tag, e in self.boundary.items()}
+
+        def block(e):
+            e = np.asarray(e, dtype=int)
+            return e.reshape(-1, e.shape[-1]) if e.size else empty
+
+        self.boundary = {tag: ({k: block(v) for k, v in e.items()} if isinstance(e, dict)
+                               else block(e)) for tag, e in self.boundary.items()}
 
     # ------------------------------------------------------------ basic info
     @property
@@ -136,14 +149,21 @@ class Mesh:
     def bc_edges(self) -> dict:
         return self.boundary
 
+    def face_blocks(self, tag) -> list:
+        """Boundary faces of ``tag`` as a list of arrays, one per face type."""
+        b = self.boundary[tag]
+        return list(b.values()) if isinstance(b, dict) else [b]
+
     @property
     def bc_nodes(self) -> dict:
         """dict tag -> sorted unique node indices on that boundary (cached; the
         cache is rebuilt when the set of tags or their edge counts change)."""
-        stamp = tuple((tag, edges.shape) for tag, edges in self.boundary.items())
+        stamp = tuple((tag, tuple(b.shape for b in self.face_blocks(tag))) for tag in self.boundary)
         cache = self.__dict__.get("_bc_nodes_cache")
         if cache is None or cache[0] != stamp:
-            cache = (stamp, {tag: np.unique(edges) for tag, edges in self.boundary.items()})
+            cache = (stamp, {tag: np.unique(np.concatenate([b.ravel() for b in
+                                                            self.face_blocks(tag)]))
+                             for tag in self.boundary})
             self.__dict__["_bc_nodes_cache"] = cache
         return cache[1]
 
@@ -197,8 +217,8 @@ class Mesh:
         by_type = {}
         for name, conn in self.cells.items():
             el = get_element(name)
-            for f in el.faces:
-                by_type.setdefault(el.face_type, []).append(conn[:, list(f)])
+            for f, ftype in zip(el.faces, el.face_types):
+                by_type.setdefault(ftype, []).append(conn[:, list(f)])
         out = {}
         for ftype, parts in by_type.items():
             faces = np.vstack(parts)
@@ -251,37 +271,58 @@ class Mesh:
 
         return wall_distance(self, tags)
 
-    def extrude(self, depth: float, layers: int = 1, tags=("front", "back")) -> "Mesh":
-        """Extrude a 2-D ``quad9`` mesh in ``z`` into ``hexahedron27`` cells.
+    def extrude(self, depth: float, layers=1, tags=("front", "back"), grading: float = 1.0
+                ) -> "Mesh":
+        """Extrude a 2-D quadratic mesh in ``z``: ``quad9`` cells become
+        ``hexahedron27``, ``triangle6`` cells ``wedge18``.
 
-        ``layers`` cells over ``depth``; the boundary edges become quad9 faces
-        under the same tags and the two ``z`` planes get ``tags``.  A 2-D
-        solution extruded this way (with ``u_z = 0`` on the ``z`` planes) is an
-        exact 3-D solution, which makes this the consistency check of the 3-D
-        code paths.
+        ``layers`` is the number of cells over ``depth`` or a sequence of the
+        ``z`` coordinates of the layer interfaces (``depth`` is then ignored);
+        ``grading`` > 1 grows the layer thickness geometrically from both
+        ``z`` planes towards the middle (see :func:`graded_layers`).  The
+        boundary edges become quad9 faces under the same tags and the two
+        ``z`` planes get ``tags`` (a dict of triangle and quadrilateral faces
+        on a mixed mesh).  A 2-D solution extruded this way (with ``u_z = 0``
+        on the ``z`` planes) is an exact 3-D solution, which makes this the
+        consistency check of the 3-D code paths.
         """
-        if self.dim != 2 or set(self.cells) != {"quad9"}:
-            raise ValueError("extrude needs a 2-D quad9 mesh")
-        conn = self.cells["quad9"]
+        if self.dim != 2 or not set(self.cells) <= {"quad9", "triangle6"}:
+            raise ValueError("extrude needs a 2-D mesh of quad9 and/or triangle6 cells")
+        if np.ndim(layers) == 0:
+            interfaces = graded_layers(depth, int(layers), grading)
+        else:
+            interfaces = np.asarray(layers, dtype=float)
+        nl = interfaces.size - 1
+        if nl < 1 or (np.diff(interfaces) <= 0).any():
+            raise ValueError("layers must be a positive count or increasing interface positions")
         N = self.n_nodes
-        nz = 2 * layers + 1
-        zz = np.linspace(0.0, depth, nz)
+        zz = np.empty(2 * nl + 1)
+        zz[::2] = interfaces
+        zz[1::2] = 0.5 * (interfaces[:-1] + interfaces[1:])
         points = np.vstack([np.column_stack([self.points, np.full(N, z)]) for z in zz])
-        # hexahedron27 (VTK) node = (quad9 node, plane offset within the cell: 0 bottom,
-        # 1 mid, 2 top)
-        pattern = [(0, 0), (1, 0), (2, 0), (3, 0), (0, 2), (1, 2), (2, 2), (3, 2),
-                   (4, 0), (5, 0), (6, 0), (7, 0), (4, 2), (5, 2), (6, 2), (7, 2),
-                   (0, 1), (1, 1), (2, 1), (3, 1),
-                   (7, 1), (5, 1), (4, 1), (6, 1), (8, 0), (8, 2), (8, 1)]
-        cells = []
-        for layer in range(layers):
-            base = 2 * layer
-            cells.append(np.column_stack([conn[:, q] + (base + off) * N for q, off in pattern]))
-        cells = {"hexahedron27": np.vstack(cells)}
+        # 3-D node = (2-D node, plane offset within the cell: 0 bottom, 1 mid, 2 top)
+        patterns = {
+            "quad9": ("hexahedron27", [
+                (0, 0), (1, 0), (2, 0), (3, 0), (0, 2), (1, 2), (2, 2), (3, 2),
+                (4, 0), (5, 0), (6, 0), (7, 0), (4, 2), (5, 2), (6, 2), (7, 2),
+                (0, 1), (1, 1), (2, 1), (3, 1),
+                (7, 1), (5, 1), (4, 1), (6, 1), (8, 0), (8, 2), (8, 1)]),
+            "triangle6": ("wedge18", list(WEDGE18_PAIRS)),
+        }
+        cells = {}
+        front, back = {}, {}
+        for name, conn in self.cells.items():
+            name3, pattern = patterns[name]
+            cells[name3] = np.vstack([
+                np.column_stack([conn[:, q] + (2 * layer + off) * N for q, off in pattern])
+                for layer in range(nl)])
+            # z planes: the bottom face has the outward normal -z, i.e. the reversed cell
+            front[name] = conn[:, list(get_element(name).reverse)]
+            back[name] = conn + (2 * nl) * N
         boundary = {}
         for tag, edges in self.boundary.items():
             faces = []
-            for layer in range(layers):
+            for layer in range(nl):
                 base = 2 * layer
                 a, b, m = edges[:, 0], edges[:, 1], edges[:, 2]
                 faces.append(np.column_stack([
@@ -289,8 +330,8 @@ class Mesh:
                     m + base * N, b + (base + 1) * N, m + (base + 2) * N, a + (base + 1) * N,
                     m + (base + 1) * N]))
             boundary[tag] = np.vstack(faces)
-        boundary[tags[0]] = conn.copy()                                  # z = 0
-        boundary[tags[1]] = conn + (nz - 1) * N                          # z = depth
+        for tag, plane in zip(tags, (front, back)):
+            boundary[tag] = plane if len(plane) > 1 else next(iter(plane.values()))
         mesh = Mesh(points, cells, boundary)
         mesh.check_orientation()
         return mesh
@@ -303,6 +344,18 @@ class Mesh:
             phi = el.shape(*[[c] for c in el.centroid])[0]
             out.append(np.column_stack([self.points[conn, k] @ phi[0] for k in range(self.dim)]))
         return np.vstack(out)
+
+
+def graded_layers(depth: float, layers: int, ratio: float = 1.0) -> np.ndarray:
+    """Interface positions of ``layers`` layers over ``[0, depth]`` whose thickness
+    grows by ``ratio`` from both ends towards the middle (``ratio = 1``: uniform)."""
+    if layers < 1:
+        raise ValueError("layers must be >= 1")
+    half = layers // 2
+    growth = ratio ** np.arange(half)
+    middle = [ratio ** half] if layers % 2 else []
+    thickness = np.concatenate([growth, middle, growth[::-1]])
+    return depth * np.concatenate([[0.0], np.cumsum(thickness) / thickness.sum()])
 
 
 def geometry(a: float, b: float, elems: int, elem_type=2) -> Mesh:
@@ -383,10 +436,26 @@ def geometry(a: float, b: float, elems: int, elem_type=2) -> Mesh:
     return Mesh(points, {el.name: conn}, boundary, X, Y, nx, ny)
 
 
-def box(a: float, b: float, c: float, elems, elem_type="hexahedron27") -> Mesh:
+def stretched_axis(length: float, elems: int, stretch: float = 0.0) -> np.ndarray:
+    """Node coordinates of ``elems`` quadratic cells over ``[0, length]`` whose
+    interfaces cluster towards both ends by the tanh mapping of parameter
+    ``stretch`` (0: uniform; 2: the end cells are about 1/5 of the middle ones);
+    the mid-nodes sit at the cell centres so the cells stay affine."""
+    s = np.linspace(-1.0, 1.0, int(elems) + 1)
+    interfaces = 0.5 * length * (1.0 + (np.tanh(stretch * s) / np.tanh(stretch) if stretch > 0
+                                        else s))
+    out = np.empty(2 * int(elems) + 1)
+    out[::2] = interfaces
+    out[1::2] = 0.5 * (interfaces[:-1] + interfaces[1:])
+    return out
+
+
+def box(a: float, b: float, c: float, elems, elem_type="hexahedron27",
+        stretch: float = 0.0) -> Mesh:
     """Structured mesh of a box ``[0, a] x [0, b] x [0, c]`` in 27-node
     hexahedra (``"hexahedron27"``) or 10-node tetrahedra (``"tetra10"``, six
-    per cell), ``elems`` cells per direction (an int or a triple).
+    per cell), ``elems`` cells per direction (an int or a triple), the cells
+    clustered towards all six walls by ``stretch`` (see :func:`stretched_axis`).
 
     Boundary tags: ``left``/``right`` (x = 0 / a), ``bottom``/``top``
     (y = 0 / b), ``front``/``back`` (z = 0 / c).
@@ -395,8 +464,9 @@ def box(a: float, b: float, c: float, elems, elem_type="hexahedron27") -> Mesh:
     if el.name not in ("hexahedron27", "tetra10"):
         raise ValueError("box supports 'hexahedron27' and 'tetra10'")
     ex, ey, ez = (elems, elems, elems) if np.isscalar(elems) else tuple(int(e) for e in elems)
-    nx, ny, nz = 2 * ex + 1, 2 * ey + 1, 2 * ez + 1
-    xx, yy, zz = np.linspace(0, a, nx), np.linspace(0, b, ny), np.linspace(0, c, nz)
+    nx, ny = 2 * ex + 1, 2 * ey + 1
+    xx, yy, zz = (stretched_axis(a, ex, stretch), stretched_axis(b, ey, stretch),
+                  stretched_axis(c, ez, stretch))
     Z, Y, X = np.meshgrid(zz, yy, xx, indexing="ij")            # node k = i + nx (j + ny k)
     points = np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])
     ci, cj, ck = np.meshgrid(np.arange(ex), np.arange(ey), np.arange(ez), indexing="ij")
@@ -445,5 +515,5 @@ def box(a: float, b: float, c: float, elems, elem_type="hexahedron27") -> Mesh:
     return mesh
 
 
-__all__ = ["Mesh", "geometry", "box", "SIDES", "BOX_SIDES", "ELEMENTS", "FACE_ELEMENTS",
-           "FACE_TYPES"]
+__all__ = ["Mesh", "geometry", "box", "graded_layers", "stretched_axis", "SIDES", "BOX_SIDES",
+           "ELEMENTS", "FACE_ELEMENTS", "FACE_TYPES"]

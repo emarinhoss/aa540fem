@@ -208,8 +208,10 @@ run.save_series("out/flow")                   # .vtu per step + .pvd
 
 ### Three dimensions
 
-The same solver runs in 3-D on 27-node hexahedra (Q2/Q1) and 10-node
-tetrahedra (P2/P1); every routine takes the dimension from the mesh, so a
+The same solver runs in 3-D on 27-node hexahedra (Q2/Q1), 10-node
+tetrahedra (P2/P1) and 18-node prisms (the triangle6 x line3 tensor
+product, with a 6-node linear prism for the pressure); every routine takes
+the dimension from the mesh, so a
 `FlowProblem` on a 3-D mesh has three velocity components in its boundary
 conditions, callables receive `(x, y, z[, t])`, forces come back as
 `(Fx, Fy, Fz)` and `wall_traction` integrates over the boundary faces.
@@ -237,7 +239,12 @@ domain decomposition in 3-D.  Tetrahedra use a conical-product Gauss-Jacobi
 rule (27 points for the P2/P1 pair).  The Spalart-Allmaras model and the
 RANS coupling also run in 3-D (`|curl u|`, wall distance to faces,
 `Mesh.extrude` for 2-D/3-D consistency tests, see `docs/turbulence.md`
-section 3.8); the committed boundary-layer meshes are still 2-D.
+section 3.8).  `Mesh.extrude(depth, layers, grading=...)` turns any 2-D
+quadratic mesh into hexahedra and prisms, with the layers graded towards
+the two end planes, so the committed boundary-layer meshes (quadrilaterals
+along the walls, triangles elsewhere) serve in 3-D as well:
+`examples/cylinder3d.py --extrude` and `examples/turbulent_flat_plate.py
+--extrude` below.
 
 **Schaefer-Turek 3D-1Z** (`examples/cylinder3d.py`: cylinder of diameter
 0.1 along z in the 2.5 x 0.41 x 0.41 channel, Re 20 on the mean inflow

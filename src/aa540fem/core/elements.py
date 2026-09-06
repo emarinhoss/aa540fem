@@ -5,7 +5,8 @@ about one element type: dimension, node count, shape functions, quadrature,
 the local node lists of its faces and edges, and how to reverse its
 orientation.  Elements are named after the meshio cell types (``triangle``,
 ``triangle6``, ``quad``, ``quad9`` in 2D; ``tetra``, ``tetra10``,
-``hexahedron``, ``hexahedron27`` in 3D, in meshio's VTK local ordering); the
+``hexahedron``, ``hexahedron27``, ``wedge``, ``wedge18`` in 3D, in meshio's VTK
+local ordering); the
 MATLAB element numbers 1, 2 and 3 are accepted as aliases for ``triangle``,
 ``quad`` and ``quad9``.
 """
@@ -21,6 +22,8 @@ from aa540fem.core.quadrature import quadrature_rule
 from aa540fem.core.shape_functions import (
     HEX27_NODES,
     TET10_EDGES,
+    WEDGE6_NODES,
+    WEDGE18_NODES,
     hessian_3,
     hessian_4,
     hessian_6,
@@ -29,6 +32,8 @@ from aa540fem.core.shape_functions import (
     hessian_hex27,
     hessian_tet4,
     hessian_tet10,
+    hessian_wedge6,
+    hessian_wedge18,
     interpfunc_3,
     interpfunc_4,
     interpfunc_6,
@@ -37,6 +42,8 @@ from aa540fem.core.shape_functions import (
     interpfunc_hex27,
     interpfunc_tet4,
     interpfunc_tet10,
+    interpfunc_wedge6,
+    interpfunc_wedge18,
 )
 
 
@@ -47,8 +54,8 @@ class ReferenceElement:
     Attributes
     ----------
     name       : meshio cell type.
-    family     : ``"triangle"``, ``"quad"``, ``"tetra"`` or ``"hexahedron"``
-                 (selects the quadrature rule).
+    family     : ``"triangle"``, ``"quad"``, ``"tetra"``, ``"hexahedron"`` or
+                 ``"wedge"`` (selects the quadrature rule).
     n_nodes    : nodes per element.
     min_order  : lowest quadrature order that fully integrates the stiffness
                  matrix for constant conductivity.
@@ -59,7 +66,8 @@ class ReferenceElement:
                  walking from start to end; in 3D a triangle or quadrilateral
                  in the face element's own ordering with the outward normal.
     face_type  : cell type of a face (``"line"``, ``"line3"``, ``"triangle6"``,
-                 ``"quad9"``, ...).
+                 ``"quad9"``, ...); prisms have two face types, see ``face_types``.
+    face_types : cell type of every face (defaults to ``face_type`` for all).
     reverse    : node permutation that flips the element orientation.
     centroid   : natural coordinates of the element centroid.
     nodes      : natural coordinates of the nodes.
@@ -85,6 +93,11 @@ class ReferenceElement:
     dim: int = 2
     n_corners: int = 0
     edges: tuple = ()
+    face_types: tuple = ()
+
+    def __post_init__(self):
+        if not self.face_types:
+            object.__setattr__(self, "face_types", (self.face_type,) * len(self.faces))
 
     def shape(self, *coords):
         """Shape functions and natural derivatives, each ``(nq, n_nodes)``:
@@ -114,6 +127,11 @@ class ReferenceElement:
     @property
     def nodes_per_face(self) -> int:
         return len(self.faces[0])
+
+    def face_elements(self):
+        """``(face, face element)`` pairs, the face element being the reference
+        element of the face's own type."""
+        return [(f, get_element(t)) for f, t in zip(self.faces, self.face_types)]
 
     @property
     def n_faces(self) -> int:
@@ -220,19 +238,59 @@ HEXAHEDRON27 = ReferenceElement(
     shape_fn=interpfunc_hex27, hessian_fn=hessian_hex27, dim=3, n_corners=8, edges=_HEX_EDGES,
 )
 
+# prisms: bottom and top triangles (outward normals -z, +z) and three quadrilaterals
+_WEDGE_EDGES = ((0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3), (0, 3), (1, 4), (2, 5))
+_WEDGE_EDGE_MID = {frozenset(e): 6 + i for i, e in enumerate(_WEDGE_EDGES)}
+_WEDGE_TRI_FACES = ((0, 2, 1), (3, 4, 5))
+_WEDGE_QUAD_FACES = (((0, 1, 4, 3), 15), ((1, 2, 5, 4), 16), ((2, 0, 3, 5), 17))
+
+
+def _wedge18_faces():
+    faces = []
+    for c in _WEDGE_TRI_FACES:
+        faces.append(c + tuple(_WEDGE_EDGE_MID[frozenset((c[i], c[(i + 1) % 3]))]
+                               for i in range(3)))
+    for c, centre in _WEDGE_QUAD_FACES:
+        faces.append(c + tuple(_WEDGE_EDGE_MID[frozenset((c[i], c[(i + 1) % 4]))]
+                               for i in range(4)) + (centre,))
+    return tuple(faces)
+
+
+WEDGE = ReferenceElement(
+    name="wedge", family="wedge", n_nodes=6, min_order=1, full_order=3,
+    faces=_WEDGE_TRI_FACES + tuple(c for c, _ in _WEDGE_QUAD_FACES), face_type="triangle",
+    face_types=("triangle", "triangle", "quad", "quad", "quad"),
+    reverse=(0, 2, 1, 3, 5, 4), centroid=(_third, _third, 0.0),
+    nodes=tuple(map(tuple, WEDGE6_NODES)),
+    shape_fn=interpfunc_wedge6, hessian_fn=hessian_wedge6, dim=3, n_corners=6,
+    edges=_WEDGE_EDGES,
+)
+
+WEDGE18 = ReferenceElement(
+    name="wedge18", family="wedge", n_nodes=18, min_order=3, full_order=6,
+    faces=_wedge18_faces(), face_type="triangle6",
+    face_types=("triangle6", "triangle6", "quad9", "quad9", "quad9"),
+    reverse=(0, 2, 1, 3, 5, 4, 8, 7, 6, 11, 10, 9, 12, 14, 13, 17, 16, 15),
+    centroid=(_third, _third, 0.0), nodes=tuple(map(tuple, WEDGE18_NODES)),
+    shape_fn=interpfunc_wedge18, hessian_fn=hessian_wedge18, dim=3, n_corners=6,
+    edges=_WEDGE_EDGES,
+)
+
 ELEMENTS = {e.name: e for e in (TRIANGLE, TRIANGLE6, QUAD, QUAD9, TETRA, TETRA10, HEXAHEDRON,
-                                HEXAHEDRON27)}
+                                HEXAHEDRON27, WEDGE, WEDGE18)}
 
 # Taylor-Hood pairs: quadratic velocity element -> linear pressure element on
 # its corner nodes (the first n_corners local nodes).
 PRESSURE_ELEMENT = {"triangle6": TRIANGLE, "quad9": QUAD, "tetra10": TETRA,
-                    "hexahedron27": HEXAHEDRON}
+                    "hexahedron27": HEXAHEDRON, "wedge18": WEDGE}
 LEGACY_ELEMENTS = {e.legacy_id: e for e in ELEMENTS.values() if e.legacy_id is not None}
 # boundary cell types (nodes per face) of 2-D and 3-D meshes
 FACE_TYPES = {2: {"line": 2, "line3": 3},
               3: {"triangle": 3, "triangle6": 6, "quad": 4, "quad9": 9}}
 FACE_ELEMENTS = FACE_TYPES[2]
 FACE_CORNERS = {"line": 2, "line3": 2, "triangle": 3, "triangle6": 3, "quad": 4, "quad9": 4}
+# face type of a 3-D boundary face from its node count
+FACE_TYPE_BY_NODES = {n: t for t, n in FACE_TYPES[3].items()}
 
 
 def get_element(key) -> ReferenceElement:

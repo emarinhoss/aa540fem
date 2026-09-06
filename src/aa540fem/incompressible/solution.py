@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from aa540fem.core.elements import FACE_CORNERS, PRESSURE_ELEMENT, get_element
+from aa540fem.core.elements import FACE_CORNERS, FACE_TYPES, PRESSURE_ELEMENT, get_element
 from aa540fem.core.mesh import Mesh
 from aa540fem.core.quadrature import gauss_legendre_quad, quadrature_points
 from aa540fem.incompressible.assembler import FlowAssembler
@@ -196,15 +196,14 @@ def _wall_traction_3d(sol: FlowSolution, tag: str, order) -> dict:
     for name, conn in mesh.cells.items():
         el = get_element(name)
         pel = PRESSURE_ELEMENT[name]
-        fel = get_element(el.face_type)
         ref = np.array(el.nodes, dtype=float)
-        fcoords, fw = quadrature_points(fel.family, fel.full_order if order in (None, 3)
-                                        else order)
-        fphi, fdnat = fel.shape_at(fcoords)                     # face shape functions
-        for face in el.faces:
+        for face, fel in el.face_elements():
             sel = boundary_face_elements(mesh, tag, name, face)
             if sel.size == 0:
                 continue
+            fcoords, fw = quadrature_points(fel.family, fel.full_order if order in (None, 3)
+                                            else order)
+            fphi, fdnat = fel.shape_at(fcoords)                 # face shape functions
             ce = conn[sel]
             # face quadrature points in the parent's natural coordinates (faces are
             # flat in reference space, so the face interpolation is exact)
@@ -325,8 +324,11 @@ def boundary_face_elements(mesh, tag, name, face):
     key = (tag, name, tuple(face))
     if key not in cache:
         el = get_element(name)
-        nc = FACE_CORNERS[el.face_type]
-        wanted = np.sort(mesh.boundary[tag][:, :nc], axis=1)
+        ftype = el.face_types[el.faces.index(tuple(face))]
+        nc = FACE_CORNERS[ftype]
+        k = FACE_TYPES[mesh.dim][ftype]
+        blocks = [b[:, :nc] for b in mesh.face_blocks(tag) if b.shape[1] == k]
+        wanted = np.sort(np.vstack(blocks), axis=1) if blocks else np.zeros((0, nc), dtype=int)
         have = np.sort(mesh.cells[name][:, list(face[:nc])], axis=1)
         if wanted.size == 0:
             cache[key] = np.zeros(0, dtype=int)

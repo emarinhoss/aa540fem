@@ -57,18 +57,28 @@ def law_of_the_wall(yplus):
     return np.where(yplus < 11.0, yplus, np.log(np.maximum(yplus, 1e-12)) / KAPPA + B)
 
 
-def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=None, verbose=True, **kw):
+def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=None, verbose=True,
+        extrude=0.0, **kw):
+    """``extrude > 0``: the 2-D mesh is extruded one layer over that depth and the
+    same case is solved in 3-D between two symmetry planes (``u_z = 0``)."""
     mesh = read_mesh(mesh_file)
+    if extrude:
+        mesh = mesh.extrude(extrude, layers=1)
     nu = 1.0 / re
-    prob = FlowProblem(mesh, mu=nu, rho=1.0, stabilisation=True,
-                       bc={"inlet": (1.0, 0.0), "top": (1.0, 0.0), "symmetry": (None, 0.0),
-                           "plate": (0.0, 0.0), "outlet": "open"})
+    bc = {"inlet": (1.0, 0.0), "top": (1.0, 0.0), "symmetry": (None, 0.0),
+          "plate": (0.0, 0.0), "outlet": "open"}
+    if mesh.dim == 3:
+        bc = {tag: (spec if spec == "open" else spec + (0.0 if tag == "plate" else None,))
+              for tag, spec in bc.items()}
+        bc.update({"front": (None, None, 0.0), "back": (None, None, 0.0)})
+    prob = FlowProblem(mesh, mu=nu, rho=1.0, stabilisation=True, bc=bc)
     # smooth initial profile (a boundary layer of thickness ~ 0.03 on the plate)
     # instead of the impulsive start, which the wall-resolved mesh cannot absorb
-    def initial(x, y):
+    def initial(x, y, z=None):
         delta = 0.03 * np.sqrt(np.maximum(x, 0.0) / 2.0 + 0.05)
         u = np.where(x > 0, 1.0 - np.exp(-y / delta), 1.0)
-        return u, np.zeros_like(y)
+        zeros = np.zeros_like(y)
+        return (u, zeros) if z is None else (u, zeros, zeros)
 
     rans = solve_rans(prob, wall_tags=["plate"], verbose=verbose, U0=initial, **kw)
     flow = rans.flow
@@ -83,6 +93,8 @@ def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=None, verbose=
     i = np.argmin(np.abs(tr["x"] - station))
     u_tau = np.sqrt(max(tr["tx"][i], 1e-300))
     near = np.abs(mesh.x - station) < 5e-3
+    if mesh.dim == 3:
+        near &= np.isclose(mesh.z, mesh.z.min())              # the profile on one plane
     order = np.argsort(mesh.y[near])
     y, u = mesh.y[near][order], flow.u[near][order]
     yplus = y * u_tau / nu
@@ -109,6 +121,8 @@ def main(argv=None):
     parser.add_argument("--tol", type=float, default=1e-3)
     parser.add_argument("--viscosity-ramp", type=float, nargs="+", default=[100.0, 10.0, 1.0],
                         help="laminar-viscosity factors of the start-up continuation")
+    parser.add_argument("--extrude", type=float, default=0.0, metavar="DEPTH",
+                        help="solve the extruded 3-D case between symmetry planes")
     parser.add_argument("--outdir", default="turb_plate_out")
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument("-v", "--verbose", action="count", default=1,
@@ -122,7 +136,8 @@ def main(argv=None):
 
     t0 = time.time()
     rans, res = run(args.mesh, args.re, verbose=args.verbose, max_outer=args.max_outer,
-                    tol=args.tol, viscosity_ramp=tuple(args.viscosity_ramp))
+                    tol=args.tol, viscosity_ramp=tuple(args.viscosity_ramp),
+                    extrude=args.extrude)
     print(f"RANS: {len(rans.history)} outer iterations, converged = {rans.converged}, "
           f"{time.time() - t0:.0f} s")
     rex, cf = res["Re_x"], res["Cf"]

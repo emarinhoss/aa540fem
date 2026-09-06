@@ -48,6 +48,8 @@ def main(argv=None):
     parser.add_argument("--re", type=float, default=100.0)
     parser.add_argument("--elems", type=int, nargs="+", default=[8, 12])
     parser.add_argument("--elem-type", default="hexahedron27", choices=["hexahedron27", "tetra10"])
+    parser.add_argument("--stretch", type=float, default=0.0,
+                        help="tanh clustering of the cells towards the walls (0: uniform)")
     parser.add_argument("--outdir", default="cavity3d_out")
     add_run_arguments(parser)
     args = parser.parse_args(argv)
@@ -59,7 +61,7 @@ def main(argv=None):
     U0 = None
     rows = []
     for n in args.elems:
-        mesh = box(1.0, 1.0, 1.0, n, args.elem_type)
+        mesh = box(1.0, 1.0, 1.0, n, args.elem_type, stretch=args.stretch)
         prob = problem(mesh, args.re)
         t0 = time.time()
         sol = solve_flow(prob, U0=None if U0 is None else U0(mesh), verbose=False)

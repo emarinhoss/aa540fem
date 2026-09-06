@@ -136,7 +136,9 @@ def gauss_trgl(m: int = 3) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 _FAMILY = {1: "triangle", 2: "quad", 3: "quad"}
-FAMILY_DIM = {"triangle": 2, "quad": 2, "tetra": 3, "hexahedron": 3}
+FAMILY_DIM = {"triangle": 2, "quad": 2, "tetra": 3, "hexahedron": 3, "wedge": 3}
+# polynomial degree integrated exactly by the m-point triangle rules of gauss_trgl
+_TRGL_DEGREE = {1: 1, 3: 2, 4: 3, 6: 4, 7: 5, 9: 5, 12: 6, 13: 7}
 
 
 def gauss_tetra(degree: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -177,6 +179,8 @@ def quadrature_rule(family, order: int):
     * quad / hexahedron: tensor product of the 1-D Gauss-Legendre rule of the
       given order on [-1, 1]^d, ``sum(w) == 2^d``.
     * tetra: :func:`gauss_tetra` exact to the polynomial degree ``order``.
+    * wedge: the ``order``-point triangle rule times the Gauss-Legendre rule of
+      matching degree on ``[-1, 1]``, ``sum(w) == 1``.
     """
     family = _FAMILY.get(family, family)
     if family == "triangle":
@@ -194,6 +198,14 @@ def quadrature_rule(family, order: int):
         return xi.ravel(), eta.ravel(), zeta.ravel(), w.ravel()
     if family == "tetra":
         return gauss_tetra(order)
+    if family == "wedge":
+        # triangle rule of `order` points times the Gauss-Legendre rule on [-1, 1]
+        # with enough points for the same polynomial degree along the axis
+        xi, eta, wt = gauss_trgl(order)
+        x1, w1 = gauss_legendre_quad(_TRGL_DEGREE.get(order, 2) // 2 + 1)
+        nt, nz = xi.size, x1.size
+        return (np.repeat(xi, nz), np.repeat(eta, nz), np.tile(x1, nt),
+                0.5 * np.outer(wt, w1).ravel())
     raise ValueError(f"Unknown element family {family!r}; expected one of {sorted(FAMILY_DIM)}")
 
 

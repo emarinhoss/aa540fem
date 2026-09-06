@@ -54,18 +54,21 @@ through `aa540fem.backends` (assembly) and `aa540fem.linalg.direct.factorise`
 (factorisation), whose defaults come from `aa540fem.hardware.get_config()`.
 
 **Dimension and dof layout.** The mesh sets the dimension (`Mesh.dim`, points
-`(n, d)`); elements are `triangle6`/`quad9` in 2D and `tetra10`/`hexahedron27`
-in 3D (meshio/VTK node ordering, registered in `core/elements.py` with faces,
-edges and the linear pressure element). `TaylorHoodSpace` numbers the unknowns
+`(n, d)`); elements are `triangle6`/`quad9` in 2D and `tetra10`/`hexahedron27`/
+`wedge18` in 3D (meshio/VTK node ordering, registered in `core/elements.py` with
+faces, edges, per-face types and the linear pressure element; the gmsh reader
+renumbers gmsh's prisms). A 3D boundary tag with both triangles and
+quadrilaterals is a dict of arrays: read tags through `Mesh.face_blocks(tag)`. `TaylorHoodSpace` numbers the unknowns
 `[u_1 (N), ..., u_d (N), p (Np corner nodes)]` (`space.n_vel = d N`);
 element-local arrays use the same order (L = d n + nc), and `_Block` holds the
 quadrature data of one cell type with `dphi`/`dpsi` as tuples of `d` gradient
 arrays and `Gmat` the `d x d` metric. User callables take `(x, y[, z][, t])`
 (`core/util.call_coeff_nd`); boundary specs have `d` components. The
 turbulence model, wall distance and RANS coupling also take `d` from the mesh
-(`Mesh.extrude` turns a quad9 mesh into one layer of hexahedra for 2D/3D
-consistency tests). Still 2D only: `transport/` (the heat code) and the
-committed boundary-layer meshes.
+(`Mesh.extrude(depth, layers, grading=)` turns any quad9/triangle6 mesh into
+hexahedra and prisms with graded layers, which is how the 2D boundary-layer
+meshes are used in 3D: `cylinder3d.py --extrude`, `turbulent_flat_plate.py
+--extrude`). Still 2D only: `transport/` (the heat code).
 
 **Fixed sparsity pattern.** `FlowAssembler` builds one `SparsityPattern`
 (`backends/pattern.py`) per space; every matrix (K, M, B, B^T, the Jacobian
@@ -122,8 +125,10 @@ the whole mesh. Under `mpirun`, code that only rank 0 runs must not call
 `make_meshes.py` from the `.geo` files (`cylinder.geo` sizes come only from its
 background field; `make(..., size_factor=)` scales them). Tests and benchmarks
 read `cylinder_bl.msh` and `flat_plate_bl.msh`; the `_bl` meshes mix quad9
-boundary-layer cells with triangle6. `box_tet10.msh` is the small 3D
-tetrahedral mesh; `core.mesh.box()` builds structured 3D meshes without gmsh.
+boundary-layer cells with triangle6 (`cylinder_bl_coarse.msh` is the base of
+the extruded 3D-1Z run). `box_tet10.msh` is the small 3D tetrahedral mesh;
+`core.mesh.box(..., stretch=)` builds structured, optionally wall-clustered 3D
+meshes without gmsh.
 
 ## Conventions that matter here
 

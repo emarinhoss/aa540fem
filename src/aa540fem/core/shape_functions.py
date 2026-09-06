@@ -312,3 +312,69 @@ def hessian_hex27(xi, eta, zeta):
     return (ddx[:, i] * ly[:, j] * lz[:, k], dlx[:, i] * dly[:, j] * lz[:, k],
             dlx[:, i] * ly[:, j] * dlz[:, k], lx[:, i] * ddy[:, j] * lz[:, k],
             lx[:, i] * dly[:, j] * dlz[:, k], lx[:, i] * ly[:, j] * ddz[:, k])
+
+
+# -- prisms (wedges): triangle x line tensor products ----------------------
+# VTK / meshio ``wedge18`` ordering: (triangle6 node, line3 node) with the line
+# nodes 0, 1, 2 at zeta = -1, 0, 1
+WEDGE18_PAIRS = ((0, 0), (1, 0), (2, 0), (0, 2), (1, 2), (2, 2),
+                 (3, 0), (4, 0), (5, 0), (3, 2), (4, 2), (5, 2),
+                 (0, 1), (1, 1), (2, 1), (3, 1), (4, 1), (5, 1))
+_TRI6_NODES = ((0, 0), (1, 0), (0, 1), (0.5, 0), (0.5, 0.5), (0, 0.5))
+WEDGE18_NODES = np.array([_TRI6_NODES[a] + (b - 1.0,) for a, b in WEDGE18_PAIRS], dtype=float)
+WEDGE6_NODES = WEDGE18_NODES[:6]
+
+
+def _wedge_factors(xi, eta, zeta, quadratic):
+    if quadratic:
+        t, dt_xi, dt_eta = interpfunc_6(xi, eta)
+        txx, txy, tyy = hessian_6(xi, eta)
+        lz, dlz = _lagrange_quadratic_1d(zeta)
+        ddlz = np.tile(np.array([1.0, -2.0, 1.0]), (zeta.size, 1))
+        a = np.array([p[0] for p in WEDGE18_PAIRS])
+        b = np.array([p[1] for p in WEDGE18_PAIRS])
+    else:
+        t, dt_xi, dt_eta = interpfunc_3(xi, eta)
+        txx, txy, tyy = hessian_3(xi, eta)
+        lz = np.column_stack([0.5 * (1.0 - zeta), 0.5 * (1.0 + zeta)])
+        dlz = np.tile(np.array([-0.5, 0.5]), (zeta.size, 1))
+        ddlz = np.zeros((zeta.size, 2))
+        a = np.array([0, 1, 2, 0, 1, 2])
+        b = np.array([0, 0, 0, 1, 1, 1])
+    return a, b, (t, dt_xi, dt_eta, txx, txy, tyy), (lz, dlz, ddlz)
+
+
+def _wedge_shape(xi, eta, zeta, quadratic):
+    xi, eta, zeta = _as_1d_3(xi, eta, zeta)
+    a, b, (t, tx, ty, _, _, _), (lz, dlz, _) = _wedge_factors(xi, eta, zeta, quadratic)
+    return (t[:, a] * lz[:, b], tx[:, a] * lz[:, b], ty[:, a] * lz[:, b], t[:, a] * dlz[:, b])
+
+
+def _wedge_hessian(xi, eta, zeta, quadratic):
+    xi, eta, zeta = _as_1d_3(xi, eta, zeta)
+    a, b, (t, tx, ty, txx, txy, tyy), (lz, dlz, ddlz) = _wedge_factors(xi, eta, zeta, quadratic)
+    return (txx[:, a] * lz[:, b], txy[:, a] * lz[:, b], tx[:, a] * dlz[:, b],
+            tyy[:, a] * lz[:, b], ty[:, a] * dlz[:, b], t[:, a] * ddlz[:, b])
+
+
+def interpfunc_wedge6(xi, eta, zeta):
+    """6-node linear prism (VTK ``wedge``: bottom triangle at ``zeta = -1``, top at ``+1``)."""
+    return _wedge_shape(xi, eta, zeta, False)
+
+
+def interpfunc_wedge18(xi, eta, zeta):
+    """18-node quadratic prism, the tensor product of the 6-node triangle and the
+    3-node line (VTK / meshio ``wedge18`` ordering: 6 corners, 6 mid-edge nodes of the
+    triangles, 3 mid-edge nodes of the vertical edges, 3 centres of the quadrilateral
+    faces)."""
+    return _wedge_shape(xi, eta, zeta, True)
+
+
+def hessian_wedge6(xi, eta, zeta):
+    """Second derivatives ``(xx, xy, xz, yy, yz, zz)`` of the linear prism."""
+    return _wedge_hessian(xi, eta, zeta, False)
+
+
+def hessian_wedge18(xi, eta, zeta):
+    """Second derivatives ``(xx, xy, xz, yy, yz, zz)`` of the quadratic prism."""
+    return _wedge_hessian(xi, eta, zeta, True)

@@ -105,8 +105,9 @@ def point_triangle_distance(P, A, B, C):
 
 
 def _wall_distance_3d(mesh, tags, chunk):
-    tris = np.vstack([_face_triangles(mesh.boundary[tag])
-                      for tag in ([tags] if isinstance(tags, str) else tags)])
+    tris = np.vstack([_face_triangles(block)
+                      for tag in ([tags] if isinstance(tags, str) else tags)
+                      for block in mesh.face_blocks(tag)])
     A, B, C = (mesh.points[tris[:, k]] for k in range(3))
     d = np.empty(mesh.n_nodes)
     # bound the (chunk x m) work arrays to a few hundred MB

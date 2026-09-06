@@ -359,8 +359,8 @@ in 3-D (`|dv/dx - du/dy|` in 2-D), the SUPG parameter uses the `d x d`
 metric tensor or the streamline length in `d` dimensions, and
 `set_velocity` takes the `d` components (`solve_rans` passes
 `flow.velocity`).  The consistency checks (`tests/test_turbulence3d.py`)
-extrude a 2-D quad9 mesh into one layer of 27-node hexahedra
-(`Mesh.extrude`) with symmetry planes: the Galerkin part of the 3-D
+extrude a 2-D quadratic mesh into one layer of 27-node hexahedra and
+18-node prisms (`Mesh.extrude`) with symmetry planes: the Galerkin part of the 3-D
 residual of a z-independent field is exactly the 2-D residual times the
 depth (weights 1/6, 4/6, 1/6 on the three node planes), the steady SA
 solve without SUPG reproduces the 2-D field to 1e-8, and with SUPG the

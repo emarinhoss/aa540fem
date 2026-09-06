@@ -63,11 +63,13 @@
 
 **3-D (done).**  The dimension is a property of the mesh (`Mesh.dim`,
 `(n, d)` points) and everything downstream takes it from there:
-`core/elements.py` registers `tetra`, `tetra10`, `hexahedron` and
-`hexahedron27` in meshio's VTK ordering with faces (triangles or
-quadrilaterals with outward normals), edges and the P2/P1, Q2/Q1 pairs;
-`core/quadrature.py` adds tensor hexahedral rules and a conical-product
-Gauss-Jacobi rule for tetrahedra; `transport/element.py` has
+`core/elements.py` registers `tetra`, `tetra10`, `hexahedron`,
+`hexahedron27`, `wedge` and `wedge18` in meshio's VTK ordering with faces
+(triangles or quadrilaterals with outward normals, both on a prism:
+`face_types`), edges and the P2/P1, Q2/Q1 and prism pairs;
+`core/quadrature.py` adds tensor hexahedral rules, a conical-product
+Gauss-Jacobi rule for tetrahedra and the triangle x Gauss product for
+prisms; `transport/element.py` has
 `jacobian_nd`, `map_gradients_nd`, `physical_laplacian_nd` and
 `element_metric_nd` (the 2-D formulas are the d = 2 case, so 2-D results are
 unchanged); `_Block` carries tuples of `d` gradients and a `d x d` metric;
@@ -75,10 +77,14 @@ unchanged); `_Block` carries tuples of `d` gradients and a `d x d` metric;
 loop over components; `dirichlet_dofs`, the body force and every user
 callable take `d` coordinates (`call_coeff_nd`); `wall_traction` integrates
 over faces in 3-D; `box()` builds structured hexahedral or tetrahedral
-meshes and `read_mesh` reads 3-D Gmsh files (physical surfaces become the
-tags); the wall distance (point-triangle), the Spalart-Allmaras solver
-and the RANS coupling follow the mesh dimension too.  Still 2-D: the
-scalar transport solver (the original heat code).
+meshes (optionally clustered towards the walls), `Mesh.extrude` turns a
+2-D quadratic mesh of quadrilaterals and triangles into hexahedra and
+prisms with graded layers (a 3-D tag then holds both face types,
+`Mesh.face_blocks`), and `read_mesh` reads 3-D Gmsh files (physical
+surfaces become the tags; Gmsh's prism numbering is converted); the wall
+distance (point-triangle), the Spalart-Allmaras solver and the RANS
+coupling follow the mesh dimension too.  Still 2-D: the scalar transport
+solver (the original heat code).
 
 **Turbulence.**  A `turbulence/` subpackage with one module per closure
 (Spalart-Allmaras, k-omega SST): each adds transported scalar(s) whose

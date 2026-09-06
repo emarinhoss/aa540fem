@@ -33,7 +33,7 @@ def test_nodal_property_and_partition_of_unity(name):
     assert np.allclose(phi, np.eye(el.n_nodes))
     phi = el.shape(*interior_points(el))[0]
     assert np.allclose(phi.sum(axis=1), 1.0)
-    assert el.dim == 3 and el.n_corners in (4, 8) and len(el.edges) in (6, 12)
+    assert el.dim == 3 and el.n_corners in (4, 6, 8) and len(el.edges) in (6, 9, 12)
     assert sorted(el.reverse) == list(range(el.n_nodes))
 
 
@@ -78,17 +78,18 @@ def test_hexahedral_rule_and_element_volumes():
         _, dnat = el.shape_at(coords)
         hs, _ = jacobian_nd(tuple(nodes[None, :, k] for k in range(3)), dnat)
         volume = np.sum(w * hs[0])
-        assert abs(volume - (1 / 6 if el.family == "tetra" else 8.0)) < 1e-14
+        exact = {"tetra": 1 / 6, "hexahedron": 8.0, "wedge": 1.0}[el.family]
+        assert abs(volume - exact) < 1e-14
 
 
 @pytest.mark.parametrize("name", ELEMENTS_3D)
 def test_faces_have_outward_normals_and_cover_the_boundary(name):
     el = get_element(name)
-    fel = get_element(el.face_type)
     nodes = np.array(el.nodes, dtype=float)
     centroid = np.array(el.centroid)
     corner_faces = set()
-    for face in el.faces:
+    assert len(el.face_types) == el.n_faces and el.face_types[0] == el.face_type
+    for face, fel in el.face_elements():
         assert len(face) == fel.n_nodes
         c = nodes[list(face[:fel.n_corners])]
         normal = np.cross(c[1] - c[0], c[2] - c[0])
@@ -102,7 +103,7 @@ def test_faces_have_outward_normals_and_cover_the_boundary(name):
     assert len(corner_faces) == el.n_faces
     # every edge of the element belongs to exactly two faces
     edge_count = {}
-    for face in el.faces:
+    for face, fel in el.face_elements():
         k = fel.n_corners
         for i in range(k):
             key = frozenset((face[i], face[(i + 1) % k]))
@@ -111,7 +112,7 @@ def test_faces_have_outward_normals_and_cover_the_boundary(name):
     assert set(edge_count.values()) == {2}
 
 
-@pytest.mark.parametrize("name", ["tetra10", "hexahedron27"])
+@pytest.mark.parametrize("name", ["tetra10", "hexahedron27", "wedge18"])
 def test_laplacian_exact_on_affine_element_and_metric_measures_sizes(name):
     el = get_element(name)
     nodes = np.array(el.nodes, dtype=float)
@@ -204,3 +205,22 @@ def test_read_gmsh_tetrahedral_box():
         c = mesh.points[mesh.boundary[tag][:, :3]]
         n = np.cross(c[:, 1] - c[:, 0], c[:, 2] - c[:, 0])
         assert np.all(np.einsum("ij,ij->i", n, c[:, 0] - centre) > 0)
+
+
+def test_stretched_box_clusters_cells_towards_the_walls():
+    from aa540fem.core.mesh import stretched_axis
+
+    x = stretched_axis(2.0, 4, 0.0)
+    assert np.allclose(x, np.linspace(0, 2, 9))
+    x = stretched_axis(1.0, 6, 2.0)
+    interfaces, mids = x[::2], x[1::2]
+    assert interfaces[0] == 0 and np.isclose(interfaces[-1], 1.0)
+    assert np.allclose(mids, 0.5 * (interfaces[:-1] + interfaces[1:]))
+    assert np.allclose(interfaces, 1.0 - interfaces[::-1])              # symmetric
+    assert np.diff(interfaces)[0] < 0.25 * np.diff(interfaces)[3]       # small wall cells
+    for name in ("hexahedron27", "tetra10"):
+        mesh = box(1.0, 1.0, 1.0, 4, name, stretch=1.5)
+        assert (mesh.jacobian_at_centroids()[name] > 0).all()
+        assert set(mesh.tags) == set(BOX_SIDES)
+        first_cell = stretched_axis(1.0, 4, 1.5)[2]
+        assert np.isclose(mesh.nodal_size("min").min(), first_cell)

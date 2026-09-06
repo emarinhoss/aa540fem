@@ -13,8 +13,12 @@ from collections import defaultdict
 
 import numpy as np
 
-from aa540fem.core.elements import ELEMENTS, FACE_TYPES
+from aa540fem.core.elements import ELEMENTS, FACE_TYPE_BY_NODES, FACE_TYPES
 from aa540fem.core.mesh import Mesh
+
+# Gmsh numbers the nodes of its 18-node prism differently from VTK (meshio passes
+# them through unchanged): VTK node i is Gmsh node GMSH_WEDGE18[i]
+GMSH_WEDGE18 = [0, 1, 2, 3, 4, 5, 6, 9, 7, 12, 14, 13, 8, 10, 11, 15, 17, 16]
 
 
 def _meshio():
@@ -34,22 +38,37 @@ def _compact(points, cells, boundary):
     new = -np.ones(points.shape[0], dtype=int)
     new[used] = np.arange(used.size)
     cells = {n: new[c] for n, c in cells.items()}
-    boundary = {t: new[e] for t, e in boundary.items()}
+    boundary = {t: ({k: new[v] for k, v in e.items()} if isinstance(e, dict) else new[e])
+                for t, e in boundary.items()}
     for t, e in boundary.items():
-        if (e < 0).any():
+        if any((b < 0).any() for b in (e.values() if isinstance(e, dict) else [e])):
             raise ValueError(f"boundary {t!r} references nodes not used by any element")
     return points[used], cells, boundary
 
 
-def from_meshio(m, orient: bool = True) -> Mesh:
-    """Convert a ``meshio.Mesh`` to :class:`Mesh`."""
+def _face_group(parts):
+    """One array per tag, or a dict face type -> array when the tag mixes
+    triangles and quadrilaterals (3-D meshes with prisms)."""
+    widths = sorted({p.shape[1] for p in parts})
+    if len(widths) == 1:
+        return np.vstack(parts)
+    return {FACE_TYPE_BY_NODES[k]: np.vstack([p for p in parts if p.shape[1] == k])
+            for k in widths}
+
+
+def from_meshio(m, orient: bool = True, gmsh_order: bool = False) -> Mesh:
+    """Convert a ``meshio.Mesh`` to :class:`Mesh` (``gmsh_order``: the file came
+    from Gmsh, whose 18-node prisms meshio does not renumber to VTK order)."""
     dim = 3 if any(cb.type in ELEMENTS and ELEMENTS[cb.type].dim == 3 for cb in m.cells) else 2
     points = np.asarray(m.points, dtype=float)[:, :dim]
 
     blocks = defaultdict(list)
     for cb in m.cells:
         if cb.type in ELEMENTS and ELEMENTS[cb.type].dim == dim:
-            blocks[cb.type].append(np.asarray(cb.data, dtype=int))
+            data = np.asarray(cb.data, dtype=int)
+            if gmsh_order and cb.type == "wedge18":
+                data = data[:, GMSH_WEDGE18]
+            blocks[cb.type].append(data)
     if not blocks:
         raise ValueError(f"no supported cells found; supported: {sorted(ELEMENTS)}")
     cells = {name: np.vstack(parts) for name, parts in blocks.items()}
@@ -68,7 +87,7 @@ def from_meshio(m, orient: bool = True) -> Mesh:
                 boundary[names_by_tag.get(t, str(t))].append(data[tags == t])
         else:
             boundary["boundary"].append(data)
-    boundary = {t: np.vstack(parts) for t, parts in boundary.items()}
+    boundary = {t: _face_group(parts) for t, parts in boundary.items()}
 
     points, cells, boundary = _compact(points, cells, boundary)
     mesh = Mesh(points, cells, boundary)
@@ -88,7 +107,8 @@ def read_mesh(path, orient: bool = True) -> Mesh:
     Nodes not used by any element are removed.  If the file has no boundary
     line cells the outer boundary is detected and tagged ``"boundary"``.
     """
-    return from_meshio(_meshio().read(path), orient=orient)
+    return from_meshio(_meshio().read(path), orient=orient,
+                       gmsh_order=str(path).lower().endswith(".msh"))
 
 
 def to_meshio(mesh: Mesh, point_data=None, cell_data=None):

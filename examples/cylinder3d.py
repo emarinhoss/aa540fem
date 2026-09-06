@@ -44,6 +44,20 @@ def problem(mesh, stabilisation=True):
                            "cylinder": (0.0, 0.0, 0.0), "outlet": "open"})
 
 
+def extruded_mesh(path, layers=5, grading=1.5):
+    """The 3D-1Z channel from a 2-D cylinder mesh (boundary-layer quads around the
+    cylinder, triangles elsewhere) extruded over the height ``H`` with layers graded
+    towards the two end walls; the end planes join the ``walls`` tag."""
+    m3 = read_mesh(path).extrude(H, layers, tags=("front", "back"), grading=grading)
+    walls = {"quad9": [m3.boundary["walls"]], "triangle6": []}
+    for tag in ("front", "back"):
+        for block in m3.face_blocks(tag):
+            walls["triangle6" if block.shape[1] == 6 else "quad9"].append(block)
+        del m3.boundary[tag]
+    m3.boundary["walls"] = {k: np.vstack(v) for k, v in walls.items() if v}
+    return m3
+
+
 def coefficients(sol):
     fx, fy, _ = sol.forces("cylinder")
     scale = 2.0 / (UBAR ** 2 * D * H)
@@ -54,6 +68,11 @@ def coefficients(sol):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--mesh", default=str(MESHES / "cylinder3d_tet10.msh"))
+    parser.add_argument("--extrude", metavar="MESH2D", default=None,
+                        help="build the channel by extruding a 2-D cylinder mesh instead")
+    parser.add_argument("--layers", type=int, default=5, help="cells across the height")
+    parser.add_argument("--grading", type=float, default=1.5,
+                        help="growth of the layer thickness away from the end walls")
     parser.add_argument("--outdir", default="cylinder3d_out")
     parser.add_argument("--no-save", action="store_true")
     parser.add_argument("--distributed", action="store_true",
@@ -65,7 +84,8 @@ def main(argv=None):
 
     if rank() == 0:
         print(f"run configuration: {config.describe()}")
-    mesh = read_mesh(args.mesh)
+    mesh = (extruded_mesh(args.extrude, args.layers, args.grading) if args.extrude
+            else read_mesh(args.mesh))
     prob = problem(mesh)
     if rank() == 0:
         print(f"{mesh.n_nodes} nodes, {mesh.n_elems} elements ({', '.join(mesh.cells)})")

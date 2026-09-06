@@ -178,10 +178,14 @@ def physical_laplacian_nd(inverse, hessians):
 def element_metric_nd(inverse, family):
     """Metric tensor ``G = J^-T T J^-1`` as a ``(n_elems, nq, d, d)`` array
     (see :func:`element_metric`; simplices use ``T`` of the equilateral
-    reference simplex, ``T_ii = 4``, ``T_ij = 2``)."""
+    reference simplex, ``T_ii = 4``, ``T_ij = 2``; a prism combines the triangle
+    metric in its base with the unit metric along its axis)."""
     d = len(inverse)
     if family in ("triangle", "tetra"):
         T = np.full((d, d), 2.0) + 2.0 * np.eye(d)
+    elif family == "wedge":                       # triangle metric in the base, unit axis
+        T = np.eye(d)
+        T[:2, :2] = np.full((2, 2), 2.0) + 2.0 * np.eye(2)
     else:
         T = np.eye(d)
     Ji = np.stack([np.stack(row, axis=-1) for row in inverse], axis=-2)   # (ne, nq, d, d)
