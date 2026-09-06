@@ -393,7 +393,7 @@ sheds vortices with, on the standard mesh (`cylinder_bl.msh`, 10.8k nodes,
 dt = 0.005: 19 minutes with numba and MUMPS, over an hour with NumPy and
 SuperLU), with the time step halved (`--dt 0.0025`, 29 minutes) and on a
 twice-finer mesh (`--mesh examples/meshes/cylinder_bl_fine.msh`, 41k nodes,
-74 minutes),
+39 minutes),
 
 | Schaefer-Turek 2D-2 | 10.8k nodes, dt 0.005 | 10.8k nodes, dt 0.0025 | 41k nodes, dt 0.005 | reference |
 |---------------------|--------|--------|--------|--------|

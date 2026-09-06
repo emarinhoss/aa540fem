@@ -97,7 +97,7 @@ at the price of iterations that grow with the Reynolds number.
 |---|---|---|---|
 | turbulent flat plate, Re 1e6 (`turbulent_flat_plate.py`) | 9 min | 4 min | Cf 0.00327 vs Coles-Fernholz 0.00323, unchanged |
 | cylinder shedding, 1600 theta steps (`cylinder_shedding.py`) | 77 min | 19 min | St 0.3013, C_D,max 3.2303, C_L,max 0.9958, unchanged |
-| cylinder shedding, twice-finer mesh (`cylinder_bl_fine.msh`, 41k nodes, 92k unknowns) | - | 74 min | St 0.3014, C_D,max 3.2320, C_L,max 0.9972 |
+| cylinder shedding, twice-finer mesh (`cylinder_bl_fine.msh`, 41k nodes, 92k unknowns) | 74 min (one factorisation per step) | 39 min (factorisation carried across steps: 699 for 1600 steps) | St 0.3014, C_D,max 3.2320, C_L,max 0.9972, identical |
 | cylinder shedding, dt 0.0025 (3200 steps, coarse mesh) | - | 29 min | St 0.3016, C_D,max 3.2271, C_L,max 0.9885 |
 
 The refined shedding run is the data point for the scaling of the direct
@@ -110,8 +110,15 @@ solver: 3.8x the unknowns cost 3.9x the time per step (2.8 s against
 | `cylinder_bl_fine.msh` | 92330 | 0.11 s | 2.66 s | 0.040 s | 2.0e7 |
 
 The factorisation grew 7.4x, as the n^1.5 of a 2D sparse LU predicts
-(3.8^1.5 = 7.4), the assembly linearly, so a theta step on the fine mesh is
-95 % factorisation; the factors take 0.25 GB.  Fewer refactorisations
-(reusing the factors over several steps while Newton contracts) or the
-Krylov path are what would speed this case up further, not the assembly.
+(3.8^1.5 = 7.4), the assembly linearly, so with one factorisation per step
+a theta step on the fine mesh was 95 % factorisation; the factors take
+0.25 GB.  The theta scheme therefore now carries the factorised Jacobian
+from one step into the next (`reuse_jacobian=True`, the default) and
+refreshes it only when a modified-Newton iteration contracts the residual
+by less than a factor 3: the fine-mesh run needs 699 factorisations for
+1600 steps and 39 minutes instead of 74, with the converged states, and
+hence the forces, unchanged (the residual is always the true one).  The
+coarse mesh, where the factorisation was 60 % of a step, gains
+proportionally less (its 19 minutes were measured with one factorisation
+per step).  Beyond this the Krylov path is the remaining lever.
 

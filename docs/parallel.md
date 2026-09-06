@@ -26,7 +26,11 @@ every Newton trial point assembled a Jacobian it never used.
 2. **Residual-only evaluations.**  `momentum_terms(jacobian=False)` for the
    Runge-Kutta stages, the explicit part of the theta scheme and the trial
    points of the damped Newton and pseudo-transient iterations
-   (`residual=` callable of `newton_iterate` / `pseudo_transient`).
+   (`residual=` callable of `newton_iterate` / `pseudo_transient`).  The
+   theta scheme also carries its factorised Jacobian from one time step
+   into the next (`reuse_jacobian=True`) and refactorises only when the
+   modified Newton iteration stops contracting by a factor 3 per
+   iteration, which halves the cost of a factorisation-bound run.
 3. **Threaded assembly** (`backends/numba_kernels.py`, `numba_sa.py`).
    The momentum and Spalart-Allmaras element loops are numba `prange`
    kernels; the NumPy einsum kernels remain as the reference and fallback
