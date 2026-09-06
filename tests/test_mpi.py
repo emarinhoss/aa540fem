@@ -125,3 +125,73 @@ def test_distributed_assembly_matches_serial():
     gathered = gather_csr(A, comm)
     ref = serial.K + serial.M + serial.Bx + serial.By - serial.BT
     assert abs(gathered - ref).max() < 1e-12 * abs(ref).max()
+
+
+def _petsc_or_skip():
+    pytest.importorskip("mpi4py")
+    from aa540fem.linalg.direct import petsc_available
+
+    if not petsc_available():
+        pytest.skip("petsc4py not available")
+
+
+def cylinder():
+    pytest.importorskip("meshio")
+    mesh = read_mesh(MESHES / "cylinder_bl.msh")
+    inflow = lambda x, y: 4.0 * 0.3 * y * (0.41 - y) / 0.41 ** 2
+    return FlowProblem(mesh, mu=1e-3, rho=1.0, stabilisation=True,
+                       bc={"inlet": (inflow, 0.0), "walls": (0.0, 0.0), "cylinder": (0.0, 0.0),
+                           "outlet": "open"})
+
+
+@pytest.mark.parametrize("case,method", [("cavity", "direct"), ("cavity", "fieldsplit"),
+                                         ("cylinder", "direct"), ("cylinder", "fieldsplit")])
+def test_distributed_newton_matches_serial(case, method):
+    """Every rank assembles its own elements; the distributed Newton reproduces the
+    serial solution (same iterations, states equal to the solver tolerance)."""
+    _petsc_or_skip()
+    from aa540fem.incompressible import solve_flow
+    from aa540fem.parallel.flow import DistributedFlowSystem
+
+    prob = cavity(10) if case == "cavity" else cylinder()
+    ref = solve_flow(prob)
+    system = DistributedFlowSystem(prob)
+    if system.size > 1:
+        assert system.part.owned.size < prob.mesh.n_nodes            # really distributed
+    sol = system.solve_steady(method=method)
+    assert sol.info["converged"]
+    assert abs(sol.info["iterations"] - ref.info["iterations"]) <= 1
+    assert np.abs(sol.U - ref.U).max() < 1e-7 * np.abs(ref.U).max()
+    if method == "fieldsplit":
+        assert max(sol.info["linear_iterations"]) < 200
+
+
+def test_distributed_theta_scheme_matches_serial():
+    _petsc_or_skip()
+    from aa540fem.incompressible import solve_flow_transient
+    from aa540fem.parallel.flow import DistributedFlowSystem
+
+    prob = cavity(8)
+    ref = solve_flow_transient(prob, dt=0.05, t_end=0.2, scheme="theta", startup_steps=1,
+                               rtol=1e-8)
+    run = DistributedFlowSystem(prob).solve_transient(0.05, 0.2, startup_steps=1, rtol=1e-8)
+    assert run.info["factorisations"] <= ref.info["factorisations"]
+    assert np.abs(run.snapshots[-1] - ref.snapshots[-1]).max() < 1e-7
+
+
+def test_distributed_state_round_trip():
+    """set_state / gather are inverse on every rank and the Dirichlet values are imposed."""
+    _petsc_or_skip()
+    from aa540fem.parallel.flow import DistributedFlowSystem
+
+    prob = cavity(6)
+    system = DistributedFlowSystem(prob)
+    rng = np.random.default_rng(0)
+    U = rng.standard_normal(system.space.ndof)
+    system.set_state(U)
+    back = system.gather()
+    fixed, vals = FlowAssembler(prob).dirichlet()
+    assert np.allclose(back[fixed], vals)
+    free = np.ones(U.size, dtype=bool)
+    free[fixed] = False
+    assert np.allclose(back[free], U[free])

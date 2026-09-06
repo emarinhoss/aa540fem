@@ -81,21 +81,47 @@ them and only rank 0 writes output.  This is the simplest way to put all
 cores of one machine, or a few nodes, behind the factorisation, and it
 needs no change in the physics code.
 
-**Domain decomposition.**  `parallel/partition.py` partitions the element
-graph with METIS (`pymetis`), adds a one-layer halo of ghost nodes and
-numbers the owned and ghost dofs per rank; `parallel/distributed.py`
-assembles the local element chunk of a rank with the same kernels and
-lets PETSc add the off-process contributions (`setValuesCOO` with the
-fixed pattern), which is exactly the element-local-then-scatter split of
-section 2.  The prototype assembles the viscous matrix this way and checks
-it against the serial one; the remaining steps to a fully distributed
-Newton are the halo exchange of the state before each assembly, Dirichlet
-elimination with `MatZeroRowsColumns`, `allreduce` for the norms and
-forces, and `.pvtu` output.
+**Domain decomposition** (`parallel/flow.py`, `DistributedFlowSystem`).
+`parallel/partition.py` partitions the element graph with METIS
+(`pymetis`; a coordinate-slab fallback without it) and gives every rank
+the nodes it owns plus a one-layer halo of ghost nodes.  Each rank builds a
+sub-mesh of its own elements (owned nodes first, then ghosts) and assembles
+residual and Jacobian on it with the ordinary `FlowAssembler` and element
+kernels, exactly as in serial; a local-to-global dof map adds the local
+CSR matrix and residual into a distributed PETSc matrix and vector
+(`setValuesLocalCSR`, `setValuesLocal`), so PETSc delivers the halo rows to
+their owners.  Global dofs are renumbered rank by rank (`[u_x, u_y, p]` of
+the owned nodes) so that PETSc's row ranges are the ownership; the state is
+a distributed vector scattered to the local numbering before every
+assembly (the halo exchange); Dirichlet rows are imposed with
+`MatZeroRowsColumns` on the owned fixed dofs; norms are PETSc reductions.
+The damped Newton (with frozen and carried Jacobians) and the theta scheme
+mirror the serial ones, the linear solve is distributed MUMPS
+(`method="direct"`) or FGMRES with the fieldsplit/LSC preconditioner on
+PETSc sub-matrices (`method="fieldsplit"`, block-Jacobi ILU(1) on the
+velocity block), and the converged state is gathered to every rank in the
+original numbering, so forces and output use the serial code and rank 0
+writes.  `tests/test_mpi.py` checks on four ranks that the cavity and the
+24k-unknown cylinder reproduce the serial states (1e-15 with MUMPS, 1e-13
+with fieldsplit) with the same Newton counts, and the theta scheme likewise.
 
-Why not sooner: below roughly 1e6 unknowns the partitioning, halo
-exchanges and PETSc setup cost more than the whole serial solve saves, and
-a 2D factorisation fits comfortably in one machine's memory.
+```
+mpirun -n 4 python benchmarks/bench_mpi.py --threads 1     # steady + theta, both methods
+```
+
+Measured on this 4-core machine (see `performance.md`): the steady cylinder
+takes 1.2 s with distributed assembly and MUMPS on four ranks against
+3.6 s for the replicated path on the same ranks and 4.8 s for one process
+with four threads, because every rank now assembles a quarter of the
+elements and inserts only its own rows; 20 theta steps take 1.7 s against
+5.2 s replicated.  The distributed fieldsplit solver is correct but slower
+here (2.8 s and 7.0 s): in 2D at this size a factorisation is cheap; it is
+the path for 3D.
+
+Still open on this path: reading the mesh already partitioned (every rank
+reads the whole mesh now, fine in 2D), `.pvtu` output written by each rank
+instead of the gather, and the RANS coupling (the Spalart-Allmaras
+transport solve is still serial).
 
 ## 5. GPUs
 

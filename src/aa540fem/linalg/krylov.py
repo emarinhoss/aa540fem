@@ -65,10 +65,6 @@ class LSCPreconditioner:
         if Qdiag is None:
             Qdiag = np.abs(F).sum(axis=1).A1           # fallback: row sums of |F|
         qinv = 1.0 / np.where(Qdiag > 0, Qdiag, 1.0)
-        L = (B @ sp.diags(qinv) @ BT).tocsr()
-        pinned = np.asarray(L.diagonal() == 0.0)
-        if pinned.any():
-            L = L + sp.diags(pinned.astype(float))
         comm = comm or PETSc.COMM_SELF
 
         def mat(M):
@@ -81,18 +77,50 @@ class LSCPreconditioner:
                 P.convert(mat_type)
             return P
 
-        self.F, self.B, self.BT = mat(F), mat(B), mat(BT)
-        self.L = mat(L)
+        F, B, BT = mat(F), mat(B), mat(BT)
+        q = F.createVecRight()
+        q.setArray(qinv)
+        self._setup(F, B, BT, q, comm, prefix)
+
+    @classmethod
+    def from_petsc(cls, F, B, BT, qinv, comm=None, prefix="lsc_"):
+        """Build from PETSc matrices (``BT`` already carrying the sign of ``B^T``)
+        and the vector ``qinv = 1 / diag(Q)``; works on distributed matrices."""
+        self = cls.__new__(cls)
+        self._setup(F, B, BT, qinv, comm, prefix)
+        return self
+
+    def _setup(self, F, B, BT, qinv, comm, prefix):
+        from petsc4py import PETSc
+
+        from aa540fem.linalg.direct import mumps_available
+
+        comm = comm or PETSc.COMM_SELF
+        self.F, self.B, self.BT, self.qinv = F, B, BT, qinv
+        Bq = B.duplicate(copy=True)
+        Bq.diagonalScale(None, qinv)                   # B Q^-1
+        L = Bq.matMult(BT)                             # B Q^-1 B^T
+        L.setOption(PETSc.Mat.Option.NEW_NONZERO_ALLOCATION_ERR, False)
+        diag = L.getDiagonal()
+        pinned = diag.getArray() == 0.0                # pinned pressure dofs: zero rows of B
+        self.pin = diag.duplicate()
+        self.pin.setArray(pinned.astype(float))
+        if comm.Get_size() > 1 or pinned.any():
+            diag.axpy(1.0, self.pin)
+            L.setDiagonal(diag, addv=PETSc.InsertMode.INSERT_VALUES)
+            L.assemble()
+        self.L = L
         self.ksp = PETSc.KSP().create(comm=comm)
         self.ksp.setOperators(self.L)
         self.ksp.setType("preonly")
-        self.ksp.getPC().setType("lu")
+        pc = self.ksp.getPC()
+        pc.setType("lu")
+        if comm.Get_size() > 1:
+            if not mumps_available():
+                raise RuntimeError("the distributed LSC preconditioner needs MUMPS")
+            pc.setFactorSolverType("mumps")
         self.ksp.setOptionsPrefix(prefix)
         self.ksp.setFromOptions()
-        self.qinv = self.F.createVecRight()
-        self.qinv.setArray(qinv)
-        self.pin = self.L.createVecRight()
-        self.pin.setArray(pinned.astype(float))
         self._t = self.L.createVecRight()
         self._u1 = self.F.createVecRight()
         self._u2 = self.F.createVecRight()

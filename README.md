@@ -324,9 +324,11 @@ with MUMPS when PETSc is installed.  Wall times on a 4-core machine
 | RANS coupling, 2 outer iterations, plate mesh | 33 s | 26 s | 17 s |
 
 [`docs/parallel.md`](docs/parallel.md) explains which option fits which
-machine, and what the MPI (`aa540fem.parallel`, replicated assembly with a
-distributed MUMPS factorisation, plus a METIS domain-decomposition
-prototype) and GPU (PETSc Krylov path: FGMRES with a fieldsplit
+machine, and what the MPI (`aa540fem.parallel`: replicated assembly with a
+distributed MUMPS factorisation, or the METIS domain decomposition of
+`parallel/flow.py` in which every rank assembles its own elements; the
+steady cylinder takes 1.2 s on four ranks against 4.8 s in one process,
+`mpirun -n 4 python benchmarks/bench_mpi.py`) and GPU (PETSc Krylov path: FGMRES with a fieldsplit
 preconditioner, least-squares-commutator Schur complement, `--linear petsc`
 or `petsc-cuda`) routes are.
 

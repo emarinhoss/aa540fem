@@ -13,3 +13,12 @@ Two stages, see ``docs/parallel.md``:
 from aa540fem.parallel.comm import is_parallel, rank, rank0_print, size, world
 
 __all__ = ["is_parallel", "rank", "rank0_print", "size", "world"]
+
+
+def __getattr__(name):                        # lazy: flow.py needs petsc4py only when used
+    if name in ("DistributedFlowSystem", "solve_flow_distributed",
+                "solve_flow_transient_distributed"):
+        from aa540fem.parallel import flow
+
+        return getattr(flow, name)
+    raise AttributeError(name)

@@ -77,6 +77,14 @@ than MUMPS in one process with four threads of assembly: at 24k unknowns the
 runs on one thread per rank.  The MPI path is there for problems that do not
 fit one process, not to speed this size up.
 
+With the distributed assembly of `parallel/flow.py` (every rank assembles
+its own elements and inserts its own rows; the raw table is at the end of
+this file) the same four ranks solve the steady cylinder in 1.2 s and 20
+theta steps in 1.7 s, against 3.6 s and 5.2 s for the replicated path and
+4.8 s / 6.5 s for one process with four threads: on one machine the
+domain decomposition is now the fastest way to run the solver, and it is
+the path that scales beyond one machine.
+
 ### Summary (4-core machine)
 
 | case | baseline | phase 1 (NumPy, SuperLU) | phase 3 (numba, SuperLU) | phases 2-3 (numba, MUMPS) |
@@ -153,3 +161,17 @@ Re 20 to 7e-13, 20 theta steps of the cylinder to 3e-9) with the same
 Newton counts; in 2D they take 1.1 to 2.7 times the direct time, as
 expected at these sizes.
 
+
+### Distributed assembly, 4 ranks x 1 thread (bench_mpi.py)
+
+100 % of the machine: 1 threads x 4 ranks, 12.0 GB budget, assembly numba, direct solver petsc, linear algebra scipy
+
+```
+case                           ranks  wall [s]  note
+steady replicated                  4      3.58  6 Newton it.
+steady distributed direct          4      1.18  6 Newton it., |dU|/|U| = 1e-15
+steady distributed fieldsplit      4      2.84  6 Newton it., |dU|/|U| = 4e-13, 131 FGMRES it. max
+theta 20 steps replicated          4      5.19  9 factorisations
+theta distributed direct           4      1.72  9 factorisations, |dU|/|U| = 7e-14
+theta distributed fieldsplit       4      6.96  9 factorisations, |dU|/|U| = 9e-10
+```

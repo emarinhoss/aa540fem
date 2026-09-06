@@ -102,6 +102,6 @@ complement, ILU or multigrid on the velocity block).
 and `backends/numba_kernels.py` / `numba_sa.py` (element kernels, the
 NumPy ones being the reference), `linalg/direct.py` (SuperLU / PETSc-MUMPS
 factorisations), `hardware.py` and `cli.py` (probe, run configuration, the
-50 % / 100 % prompt), `parallel/` (MPI).  Physics modules never import a
+50 % / 100 % prompt), `parallel/` (MPI: partitioning, replicated and domain-decomposed assembly, the distributed Newton and theta scheme of `parallel/flow.py`).  Physics modules never import a
 backend; they take element-local arrays from a kernel and scatter them, so
 a GPU or distributed backend plugs in below them.

@@ -207,26 +207,7 @@ class FlowAssembler:
         With ``rate=True`` the time derivatives of the velocity values are
         returned (zero for the pressure pin and for constant values).
         """
-        sp_ = self.space
-        mesh = self.mesh
-        evaluate = values_rate if rate else values_at
-        fixed = {}
-        for tag, spec in self.problem.bc.items():
-            if spec == OPEN:
-                continue
-            nodes = mesh.bc_nodes[tag]
-            for comp, val in enumerate(spec):
-                if val is None:
-                    continue
-                dofs = sp_.dof_ux(nodes) if comp == 0 else sp_.dof_uy(nodes)
-                vals = evaluate(val, mesh.x[nodes], mesh.y[nodes], t)
-                fixed.update(zip(dofs.tolist(), vals.tolist()))
-        if self.problem.pins_pressure:
-            node = sp_.pressure_nodes[0]
-            fixed[int(sp_.dof_p([node])[0])] = 0.0 if rate else float(
-                values_at(self.problem.pin_value, mesh.x[[node]], mesh.y[[node]])[0])
-        dofs = np.array(sorted(fixed), dtype=int)
-        return dofs, np.array([fixed[d] for d in dofs])
+        return dirichlet_dofs(self.problem, self.space, t, rate)
 
     # -- steady operator ----------------------------------------------
     def steady_residual(self, U, F, with_pressure=True, t=0.0):
@@ -246,3 +227,28 @@ class FlowAssembler:
             R = R - self.BT @ U + self.B @ U
             J_data = J_data - self.BT_data + self.B_data
         return R, self.pattern.matrix(J_data)
+
+
+def dirichlet_dofs(problem: FlowProblem, space: TaylorHoodSpace, t=0.0, rate: bool = False):
+    """Fixed dofs of ``problem`` in the layout of ``space`` and their values
+    (see :meth:`FlowAssembler.dirichlet`); needs no assembler, so a
+    distributed solver can evaluate it from the mesh alone."""
+    mesh = problem.mesh
+    evaluate = values_rate if rate else values_at
+    fixed = {}
+    for tag, spec in problem.bc.items():
+        if spec == OPEN:
+            continue
+        nodes = mesh.bc_nodes[tag]
+        for comp, val in enumerate(spec):
+            if val is None:
+                continue
+            dofs = space.dof_ux(nodes) if comp == 0 else space.dof_uy(nodes)
+            vals = evaluate(val, mesh.x[nodes], mesh.y[nodes], t)
+            fixed.update(zip(dofs.tolist(), vals.tolist()))
+    if problem.pins_pressure:
+        node = space.pressure_nodes[0]
+        fixed[int(space.dof_p([node])[0])] = 0.0 if rate else float(
+            values_at(problem.pin_value, mesh.x[[node]], mesh.y[[node]])[0])
+    dofs = np.array(sorted(fixed), dtype=int)
+    return dofs, np.array([fixed[d] for d in dofs])
