@@ -237,6 +237,31 @@ domain decomposition in 3-D.  Tetrahedra use a conical-product Gauss-Jacobi
 rule (27 points for the P2/P1 pair); the boundary layer meshes and the
 turbulence model are still 2-D.
 
+**Schaefer-Turek 3D-1Z** (`examples/cylinder3d.py`: cylinder of diameter
+0.1 along z in the 2.5 x 0.41 x 0.41 channel, Re 20 on the mean inflow
+velocity 0.2, stabilised P2/P1 tetrahedra from
+`make_meshes.py::make_cylinder3d`).  Reference values 6.185 / 0.0094 /
+0.1710 (John 2002, Bayraktar, Mierka and Turek 2012) and the benchmark
+intervals of Schaefer and Turek (1996):
+
+| mesh (unknowns) | solver | wall | C_D | C_L | dp |
+|---|---|---|---|---|---|
+| `cyl3d_coarse.msh` (81k) | MUMPS / fieldsplit-LSC | 268 s / 235 s | 6.240 | -0.016 | 0.1758 |
+| `cylinder3d_tet10.msh` (132k) | MUMPS, 6 GB | 592 s | 6.227 | 0.014 | 0.1742 |
+| `cyl3d_fine2.msh` (227k) | fieldsplit-LSC, 8 GB | 992 s | 6.207 | 0.014 | 0.1718 |
+| reference (interval) | | | 6.185 (6.05-6.25) | 0.0094 (0.008-0.010) | 0.1710 (0.165-0.175) |
+
+Drag and pressure difference converge monotonically towards the reference
+(0.4 % and 0.5 % away on the finest mesh) and lie inside the intervals
+from 132k unknowns on; the lift, 0.15 % of the drag, has the right sign
+from 132k unknowns but stays at 0.014, which needs a boundary-layer
+resolution of the cylinder that these isotropic tetrahedral meshes do not
+have (refining the cylinder surface alone while coarsening the channel,
+`cyl3d_bl.msh`, makes every number worse: at this blockage the channel
+walls and the wake set the drag).  The direct solver and the Krylov
+solver give identical numbers; the Krylov path is the one that fits the
+227k case in memory.
+
 ### High Reynolds numbers: stabilisation and continuation
 
 ```python

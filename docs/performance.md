@@ -175,3 +175,22 @@ theta 20 steps replicated          4      5.19  9 factorisations
 theta distributed direct           4      1.72  9 factorisations, |dU|/|U| = 7e-14
 theta distributed fieldsplit       4      6.96  9 factorisations, |dU|/|U| = 9e-10
 ```
+
+### 3-D: Schaefer-Turek 3D-1Z (Re 20), one process, 4 threads
+
+| mesh | unknowns | solver | Newton it. | wall | peak RSS | C_D | C_L | dp |
+|---|---|---|---|---|---|---|---|---|
+| `cyl3d_coarse.msh` | 81k | MUMPS | 7 | 268 s | 4.0 GB | 6.2397 | -0.0164 | 0.1758 |
+| `cyl3d_coarse.msh` | 81k | fieldsplit / LSC, ILU(1) | 7 | 235 s | 3.1 GB | 6.2397 | -0.0164 | 0.1758 |
+| `cylinder3d_tet10.msh` | 132k | MUMPS | 7 | 592 s | 6.6 GB | 6.2273 | 0.0141 | 0.1742 |
+| `cyl3d_bl.msh` (cylinder refined, channel coarsened) | 99k | MUMPS, Newton then PTC | 6 | 492 s | | 6.3770 | 0.0540 | 0.1806 |
+| `cyl3d_fine2.msh` | 227k | fieldsplit / LSC, ILU(1) | 7 | 992 s | 8.5 GB | 6.2073 | 0.0138 | 0.1718 |
+
+Reference 6.185 / 0.0094 / 0.1710.  In 3-D the factorisation dominates a
+Newton iteration (about 40 s of the 38 s per iteration at 81k unknowns,
+80 s at 132k) and its memory grows faster than the problem (4.0, 6.6 GB);
+the Krylov solver takes about the same time per iteration and less memory,
+and is the only option here beyond 150k unknowns on this 15 GB machine.
+Newton from the Stokes start needs heavy damping on the first steps and
+on the cylinder-refined mesh stalls, where the pseudo-transient
+continuation takes over (three steps to |R| = 1e-5, then Newton).
