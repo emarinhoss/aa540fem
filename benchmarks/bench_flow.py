@@ -59,7 +59,7 @@ def case_theta():
     prob = cylinder_problem(1.5)
     run = solve_flow_transient(prob, dt=0.005, t_end=0.1, scheme="theta", startup_steps=2,
                                output_interval=0.1)
-    return f"{run.info['steps']} steps"
+    return f"{run.info['steps']} steps, {run.info.get('factorisations', '?')} factorisations"
 
 
 def case_rk45():

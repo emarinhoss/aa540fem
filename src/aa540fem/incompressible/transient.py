@@ -36,7 +36,8 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
                          startup_steps: int = 0, frozen_jacobian: bool = True,
                          scheme: str = "rk45", output_interval: float | None = None,
                          dt_max: float | None = None,
-                         adaptive: bool = True) -> TransientFlowSolution:
+                         adaptive: bool = True,
+                         reuse_jacobian: bool = True) -> TransientFlowSolution:
     """Time integration of the Navier-Stokes system.
 
     ``scheme="rk45"`` (default): explicit Dormand-Prince 5(4) on the velocity
@@ -53,8 +54,13 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
     with ``S(U) = K U + N(U) - F``; the pressure and the continuity equation
     are implicit.  ``startup_steps`` backward-Euler steps are taken first
     (Rannacher start-up), which damps the Crank-Nicolson ringing after an
-    impulsive start.  With ``frozen_jacobian`` each step factorises its
-    Jacobian once and iterates with it (modified Newton).
+    impulsive start.  With ``frozen_jacobian`` a step iterates with one
+    factorised Jacobian (modified Newton), and with ``reuse_jacobian`` that
+    factorisation is carried into the following steps for as long as every
+    iteration still reduces the residual by a factor 3; the residual is
+    always the true one, so the converged states are unchanged while the
+    number of factorisations (``info["factorisations"]``) drops far below
+    the number of steps.
 
     ``U0`` may be a velocity/pressure vector or a callable
     ``(x, y) -> (ux, uy)`` for the initial velocity.  ``callback(step, t,
@@ -88,6 +94,9 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
     times = [0.0]
     snapshots = [U.copy()]
     newton_iterations = []
+    factorisations = 0
+    solver = None                               # (eliminator, factorisation) carried over
+    th_prev = None
     if verbose:
         print(f"Taylor-Hood: {space.ndof} unknowns; {nsteps} steps of dt = {dt} (theta = {theta})")
 
@@ -113,13 +122,23 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
 
         guess = U_old.copy()
         guess[fixed] = vals
+        if th != th_prev:                       # the Jacobian changes with theta
+            solver, th_prev = None, th
         res = newton_iterate(lambda Un: evaluate(Un, True), guess, fixed, method, rtol=rtol,
                              atol=atol, max_newton=max_newton, damping=damping,
                              frozen_jacobian=frozen_jacobian,
-                             residual=lambda Un: evaluate(Un, False))
+                             residual=lambda Un: evaluate(Un, False), solver=solver)
+        if not res.converged and solver is not None:
+            # a stale factorisation can stall Newton: retry with a fresh one
+            res = newton_iterate(lambda Un: evaluate(Un, True), guess, fixed, method,
+                                 rtol=rtol, atol=atol, max_newton=max_newton,
+                                 damping=damping, frozen_jacobian=frozen_jacobian,
+                                 residual=lambda Un: evaluate(Un, False))
         if not res.converged:
             raise RuntimeError(f"Newton did not converge at t = {t:.6g} "
                                f"(|R| = {res.residuals[-1]:.2e})")
+        solver = res.solver if reuse_jacobian else None
+        factorisations += res.factorisations
         U = res.T
         S_old = asm.K @ U + asm.convection(U, jacobian=False) - F_new
         S_old[2 * space.N:] = 0.0
@@ -136,7 +155,8 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
                   f"{res.iterations} Newton iterations")
 
     info = {"scheme": "theta", "steps": nsteps, "dt": dt, "theta": theta,
-            "startup_steps": startup_steps, "newton_iterations": newton_iterations}
+            "startup_steps": startup_steps, "newton_iterations": newton_iterations,
+            "factorisations": factorisations}
     return TransientFlowSolution(problem, space, np.asarray(times), snapshots, info, asm)
 
 

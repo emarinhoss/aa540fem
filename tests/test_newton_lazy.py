@@ -73,3 +73,37 @@ def test_solve_flow_uses_the_lazy_path_and_keeps_results():
     assert sol.info["converged"]
     ref = solve_flow(prob, continuation="ptc")
     assert np.allclose(sol.U, ref.U, atol=1e-7)
+
+
+def test_theta_scheme_reuses_factorisations_across_steps():
+    """Carrying the factorisation over steps changes the count, not the states."""
+    from aa540fem.incompressible import solve_flow_transient
+
+    runs = {}
+    for reuse in (False, True):
+        runs[reuse] = solve_flow_transient(cavity(8), dt=0.02, t_end=0.4, theta=0.5,
+                                           scheme="theta", startup_steps=2, rtol=1e-8,
+                                           reuse_jacobian=reuse)
+    ref, new = runs[False], runs[True]
+    assert ref.info["factorisations"] >= ref.info["steps"]
+    assert new.info["factorisations"] < ref.info["factorisations"] // 2
+    assert np.allclose(new.snapshots[-1], ref.snapshots[-1], atol=1e-7)
+
+
+def test_newton_iterate_accepts_a_previous_solver():
+    prob = cavity(6)
+    asm = FlowAssembler(prob)
+    fixed, vals = asm.dirichlet()
+    F = asm.body_load()
+    U = np.zeros(asm.space.ndof)
+    U[fixed] = vals
+    rj = lambda V: asm.steady_residual_jacobian(V, F)
+    first = newton_iterate(rj, U, fixed, frozen_jacobian=True, rtol=1e-10)
+    assert first.converged and first.solver is not None and first.factorisations >= 1
+    # the converged state's Jacobian solves a nearby problem without refactorising
+    free = np.ones(U.size)
+    free[fixed] = 0.0
+    again = newton_iterate(rj, first.T + 1e-3 * np.sin(np.arange(U.size)) * free,
+                           fixed, frozen_jacobian=True, rtol=1e-8, solver=first.solver)
+    assert again.converged and again.factorisations == 0
+    assert np.allclose(again.T, first.T, atol=1e-7)

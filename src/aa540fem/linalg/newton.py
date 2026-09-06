@@ -16,6 +16,8 @@ class NewtonResult:
     residuals: list = field(default_factory=list)   # ||R|| per iteration, incl. initial
     converged: bool = False
     steps: list = field(default_factory=list)       # damping factor of each update
+    factorisations: int = 0                         # Jacobians factorised in this call
+    solver: tuple | None = None                     # (eliminator, solver) in use at the end
 
     @property
     def iterations(self) -> int:
@@ -26,7 +28,8 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
            maxiter=None, rtol: float = 1e-10, atol: float = 1e-12, max_newton: int = 25,
            damping: bool = True, verbose: bool = False,
            frozen_jacobian: bool = False, abort_ratio: float | None = None,
-           stall_iterations: int | None = None, residual=None) -> NewtonResult:
+           stall_iterations: int | None = None, residual=None,
+           solver: tuple | None = None) -> NewtonResult:
     """Solve ``R(T) = 0`` with (damped) Newton iterations.
 
     Parameters
@@ -62,6 +65,13 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
                         convergence check; ``residual_jacobian`` is then only
                         called where a Jacobian is factorised.  The iterates
                         are unchanged, the assembly work is not.
+    solver            : with ``frozen_jacobian``, a ``(eliminator, solver)``
+                        pair from a previous call (``NewtonResult.solver``)
+                        to start from instead of factorising; it is used as
+                        long as it contracts the residual and refreshed
+                        otherwise, so successive time steps can share one
+                        factorisation.  The pair in use at the end is
+                        returned in ``NewtonResult.solver``.
     """
     T = np.array(T, dtype=float, copy=True)
     nodes = np.asarray(nodes, dtype=int)
@@ -81,7 +91,10 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
     if verbose:
         print(f"  Newton 0: |R| = {r:.3e}")
 
-    solver = None
+    if solver is not None and frozen_jacobian:
+        elim, solver = solver
+    else:
+        solver = None
     for it in range(1, max_newton + 1):
         if r <= target:
             result.converged = True
@@ -92,6 +105,7 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
             elim = eliminate(J, nodes)
             solver = (method(elim.K_bc) if callable(method)
                       else LinearSolver(elim.K_bc, method, tol, maxiter, symmetric=False))
+            result.factorisations += 1
         rhs = elim.apply_rhs(-R, np.zeros(nodes.size))
         delta, _ = solver.solve(rhs)
 
@@ -129,4 +143,6 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
                 break
     else:
         result.converged = r <= target
+    if frozen_jacobian and solver is not None:
+        result.solver = (elim, solver)
     return result

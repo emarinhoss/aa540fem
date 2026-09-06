@@ -110,7 +110,9 @@ def main(argv=None):
     else:
         run = solve_flow_transient(prob, dt=args.dt, t_end=args.t_end, scheme="rk45", U0=start.U,
                                    output_interval=args.output_interval, callback=log)
-    print(f"transient: {run.info['steps']} steps in {time.time() - t0:.0f} s")
+    factorised = run.info.get("factorisations")
+    print(f"transient: {run.info['steps']} steps in {time.time() - t0:.0f} s"
+          + (f" ({factorised} factorisations)" if factorised else ""))
 
     t = np.array([h[0] for h in history])
     cd = np.array([h[1] for h in history])
