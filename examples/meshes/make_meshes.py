@@ -70,14 +70,19 @@ def make(name: str, order: int, quads: bool, geo: pathlib.Path = HERE / "annulus
 def make_flat_plate(name: str = "flat_plate_bl", order: int = 2, x0: float = -0.5,
                     x1: float = 2.0, plate: float = 1.5, height: float = 0.5,
                     lc: float = 0.05, lc_plate: float = 0.02, size_wall: float = 2e-3,
-                    ratio: float = 1.15, thickness: float = 0.04):
+                    ratio: float = 1.15, thickness: float = 0.04,
+                    lc_edge: float | None = None, edge_radius: float = 0.1):
     """Laminar flat-plate domain ``[x0, x1] x [0, height]``.
 
     The plate is ``y = 0, 0 <= x <= plate`` (tag ``plate``); upstream of it
     the bottom is a symmetry line (tag ``symmetry``); ``inlet``, ``outlet``
     and ``top`` are the other sides.  A quadrilateral boundary layer grows
     from the plate (first cell ``size_wall``, growth ``ratio``, total
-    ``thickness``); the rest is triangles.
+    ``thickness``); the rest is triangles.  ``lc_edge`` refines the
+    streamwise spacing towards the two ends of the plate (from ``lc_edge``
+    at the ends to ``lc_plate`` at ``edge_radius``): the leading and
+    trailing edges are singular points of the flow and cells a thousand
+    times longer than high at those points defeat the Newton solver.
     """
     gmsh.initialize()
     try:
@@ -105,6 +110,21 @@ def make_flat_plate(name: str = "flat_plate_bl", order: int = 2, x0: float = -0.
         gmsh.model.addPhysicalGroup(1, [plate_line], name="plate")
         gmsh.model.addPhysicalGroup(2, [surface], name="fluid")
         _boundary_layer([plate_line], size_wall, ratio, thickness)
+        if lc_edge is not None:
+            # size grows linearly with the distance to the plate ends, reaching
+            # lc_plate at edge_radius and lc (the far-field size) further out;
+            # Gmsh takes the minimum of this field and the point sizes, so the
+            # plate keeps lc_plate and the far field lc
+            f = gmsh.model.mesh.field
+            dist = f.add("Distance")
+            f.setNumbers(dist, "PointsList", [p2, p3])
+            thr = f.add("Threshold")
+            f.setNumber(thr, "InField", dist)
+            f.setNumber(thr, "SizeMin", lc_edge)
+            f.setNumber(thr, "SizeMax", lc)
+            f.setNumber(thr, "DistMin", 0.0)
+            f.setNumber(thr, "DistMax", edge_radius * (lc - lc_edge) / (lc_plate - lc_edge))
+            f.setAsBackgroundMesh(thr)
         gmsh.option.setNumber("Mesh.ElementOrder", order)
         gmsh.option.setNumber("Mesh.SecondOrderIncomplete", 0)
         gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
@@ -121,10 +141,13 @@ def make_turbulent_flat_plate(name: str = "flat_plate_turb"):
 
     Domain ``[-0.5, 2.5] x [0, 1]``, plate ``0 <= x <= 2``; 30 quadrilateral
     layers from the wall, the first one 2e-5 thick (``y+`` about 1 at
-    ``Re = 1e6`` per unit length), growth ratio 1.25, 6 % total thickness.
+    ``Re = 1e6`` per unit length), growth ratio 1.25, 6 % total thickness;
+    the streamwise spacing shrinks to 2e-4 at the leading and trailing
+    edges.
     """
     return make_flat_plate(name=name, x0=-0.5, x1=2.5, plate=2.0, height=1.0, lc=0.1,
-                           lc_plate=0.02, size_wall=2e-5, ratio=1.25, thickness=0.06)
+                           lc_plate=0.02, size_wall=2e-5, ratio=1.25, thickness=0.06,
+                           lc_edge=2e-4)
 
 
 def naca4(code: str = "0012", n: int = 100, chord: float = 1.0):

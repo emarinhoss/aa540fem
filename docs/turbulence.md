@@ -263,7 +263,12 @@ damped Newton iterate, the first pseudo-time step needs a pressure jump of
 order `1 / dtau` to enforce it, and the stabilisation terms, quadratic in
 velocity and pressure, turn that jump into a residual that does not shrink
 with the step: every step is rejected.  With the projection the laminar
-plate at Re 1e5 converges from rest in 10 pseudo-time steps.
+plate at Re 1e5 converges from rest in 10 pseudo-time steps.  In the
+`"auto"` mode the continuation starts from Newton's last iterate only if
+Newton halved the residual; a couple of heavily damped Newton steps that
+barely reduced it leave a worse state than the initial one (on the second
+ramp stage the first pseudo-time step from them is rejected, while from the
+initial state the stage converges in 11 steps).
 
 The sub-solves inside the outer iteration are converged only to a relative
 residual of 1e-5 (flow) and 1e-4 (turbulence): the outer iteration changes
@@ -278,7 +283,14 @@ length 1e6, `Re_x` up to 2e6), inflow on the left and top, symmetry lines
 upstream and downstream of the plate, do-nothing outflow, `nu_tilde_inf = 3 nu`.
 The mesh (`make_meshes.make_turbulent_flat_plate()`) has 30 quadrilateral
 layers from the wall, the first one 2e-5 thick (`y+` about 1 with the computed
-wall shear), inside a triangular mesh; 18k nodes.
+wall shear), inside a triangular mesh; the streamwise spacing shrinks from
+0.01 in the middle of the plate to 1e-4 at its two ends; 23k nodes.  The
+refinement at the ends is essential: the leading and trailing edges are
+singular points of the flow (the pressure and the wall shear behave like
+`x^(-1/2)`), and with cells a thousand times longer than high there the
+Newton and pseudo-transient solvers stalled on the final ramp stage, with
+the whole residual concentrated in the half-dozen cells around the two
+points.  A first cell of aspect ratio 50 at the ends removes the problem.
 
 Comparisons:
 

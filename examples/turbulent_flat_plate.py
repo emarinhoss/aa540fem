@@ -16,7 +16,11 @@ Compared with:
   ``Cf = 0.0576 Re_x^(-1/5)``;
 - the law of the wall ``u+ = y+`` (viscous sublayer) and
   ``u+ = ln(y+)/kappa + B`` with kappa = 0.41, B = 5.0 (log layer), at
-  the station x = 1.5.
+  the station x = 1.5;
+- the Coles-Fernholz correlation ``Cf = 2 [ln(Re_theta)/0.384 + 4.127]^-2``
+  at the momentum-thickness Reynolds number of the computed profile at
+  that station (Nagib, Chauhan & Monkewitz 2007), which does not depend on
+  where the boundary layer became turbulent.
 """
 
 from __future__ import annotations
@@ -77,11 +81,19 @@ def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=1.5, verbose=T
     u_tau = np.sqrt(max(tr["tx"][i], 1e-300))
     near = np.abs(mesh.x - station) < 5e-3
     order = np.argsort(mesh.y[near])
-    yplus = mesh.y[near][order] * u_tau / nu
-    uplus = flow.u[near][order] / u_tau
+    y, u = mesh.y[near][order], flow.u[near][order]
+    yplus = y * u_tau / nu
+    uplus = u / u_tau
+    # momentum thickness of the profile and the Coles-Fernholz skin friction at
+    # that Re_theta (Nagib, Chauhan & Monkewitz 2007: kappa 0.384, C 4.127),
+    # the comparison that does not depend on where the boundary layer started
+    theta = np.trapezoid(u * (1.0 - u), y)
+    re_theta = theta / nu
+    cf_cf = 2.0 / (np.log(re_theta) / 0.384 + 4.127) ** 2
     return rans, {"Re_x": rex, "Cf": cf, "Cf_white": cf_white(rex), "Cf_power": cf_power(rex),
                   "yplus": yplus, "uplus": uplus, "u_tau": u_tau, "station": station,
-                  "nu": nu}
+                  "nu": nu, "Re_theta": re_theta, "Cf_station": 2.0 * u_tau ** 2,
+                  "Cf_coles_fernholz": cf_cf}
 
 
 def main(argv=None):
@@ -106,18 +118,31 @@ def main(argv=None):
     print(f"RANS: {len(rans.history)} outer iterations, converged = {rans.converged}, "
           f"{time.time() - t0:.0f} s")
     rex, cf = res["Re_x"], res["Cf"]
-    sel = (rex > 3e5) & (rex < 2e6)
-    dev = 100 * np.abs(cf[sel] / res["Cf_white"][sel] - 1)
-    print(f"Cf vs White for 3e5 < Re_x < 2e6: max {dev.max():.1f} %, mean {dev.mean():.1f} %")
-    for r in (3e5, 5e5, 1e6, 1.5e6, 2e6):
-        i = np.argmin(np.abs(rex - r))
+    lo, hi = 0.15 * rex.max(), 0.98 * rex.max()      # 3e5 < Re_x < 2e6 at Re = 1e6
+    sel = (rex > lo) & (rex < hi)
+    for name, ref in (("White", res["Cf_white"]), ("the 1/7 law", res["Cf_power"])):
+        dev = 100 * (cf[sel] / ref[sel] - 1)
+        print(f"Cf vs {name} for {lo:.1e} < Re_x < {hi:.1e}: "
+              f"{dev.min():+.1f} % to {dev.max():+.1f} %, mean {dev.mean():+.1f} %")
+    for frac in (0.15, 0.25, 0.5, 0.75, 0.95):
+        i = np.argmin(np.abs(rex - frac * rex.max()))
         print(f"  Re_x = {rex[i]:.2e}: Cf = {cf[i]:.5f}   White {res['Cf_white'][i]:.5f}   "
               f"1/7 law {res['Cf_power'][i]:.5f}")
+    print(f"at x = {res['station']}: Re_theta = {res['Re_theta']:.0f}, "
+          f"Cf = {res['Cf_station']:.5f}, "
+          f"Coles-Fernholz Cf(Re_theta) = {res['Cf_coles_fernholz']:.5f} "
+          f"({100 * (res['Cf_station'] / res['Cf_coles_fernholz'] - 1):+.1f} %)")
     yp, up = res["yplus"], res["uplus"]
-    log = (yp > 30) & (yp < 300)
     print(f"law of the wall at x = {res['station']}: first node y+ = {yp[1]:.2f}, "
-          f"log layer max |u+ - law| = {np.abs(up[log] - law_of_the_wall(yp[log])).max():.2f} "
-          f"({log.sum()} nodes)")
+          f"u_tau = {res['u_tau']:.4f}")
+    for lo_p, hi_p in ((5, 30), (30, 300), (50, 300)):
+        band = (yp > lo_p) & (yp < hi_p)
+        if band.any():
+            err = up[band] - law_of_the_wall(yp[band])
+            print(f"  {lo_p} < y+ < {hi_p}: u+ - law in [{err.min():+.2f}, {err.max():+.2f}] "
+                  f"({band.sum()} nodes)")
+        else:
+            print(f"  {lo_p} < y+ < {hi_p}: no nodes")
     rans.save(outdir / "turbulent_plate.vtu")
     print(f"Saved {outdir / 'turbulent_plate.vtu'}")
 
