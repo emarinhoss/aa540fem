@@ -2,7 +2,9 @@
 
 ``meshio`` is an optional dependency (``pip install meshio``).  Any format
 it reads works, but Gmsh ``.msh`` files are the main target: physical
-groups of dimension 1 become the boundary tags of the :class:`Mesh`.
+groups of dimension ``d - 1`` (lines of a 2-D mesh, surfaces of a 3-D one)
+become the boundary tags of the :class:`Mesh`; a file with 3-D cells is a
+3-D mesh, otherwise a 2-D one.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from aa540fem.core.elements import ELEMENTS, FACE_ELEMENTS
+from aa540fem.core.elements import ELEMENTS, FACE_TYPES
 from aa540fem.core.mesh import Mesh
 
 
@@ -41,22 +43,23 @@ def _compact(points, cells, boundary):
 
 def from_meshio(m, orient: bool = True) -> Mesh:
     """Convert a ``meshio.Mesh`` to :class:`Mesh`."""
-    points = np.asarray(m.points, dtype=float)[:, :2]
+    dim = 3 if any(cb.type in ELEMENTS and ELEMENTS[cb.type].dim == 3 for cb in m.cells) else 2
+    points = np.asarray(m.points, dtype=float)[:, :dim]
 
     blocks = defaultdict(list)
     for cb in m.cells:
-        if cb.type in ELEMENTS:
+        if cb.type in ELEMENTS and ELEMENTS[cb.type].dim == dim:
             blocks[cb.type].append(np.asarray(cb.data, dtype=int))
     if not blocks:
-        raise ValueError(f"no supported 2-D cells found; supported: {sorted(ELEMENTS)}")
+        raise ValueError(f"no supported cells found; supported: {sorted(ELEMENTS)}")
     cells = {name: np.vstack(parts) for name, parts in blocks.items()}
 
-    # Boundary edges from the 1-D cells, grouped by Gmsh physical group.
-    names_by_tag = {int(v[0]): name for name, v in m.field_data.items() if int(v[1]) == 1}
+    # Boundary faces from the (d-1)-dimensional cells, grouped by Gmsh physical group.
+    names_by_tag = {int(v[0]): name for name, v in m.field_data.items() if int(v[1]) == dim - 1}
     phys = m.cell_data.get("gmsh:physical")
     boundary = defaultdict(list)
     for i, cb in enumerate(m.cells):
-        if cb.type not in FACE_ELEMENTS:
+        if cb.type not in FACE_TYPES[dim]:
             continue
         data = np.asarray(cb.data, dtype=int)
         if phys is not None:
@@ -72,7 +75,9 @@ def from_meshio(m, orient: bool = True) -> Mesh:
     if orient:
         mesh.check_orientation()
     if not boundary:
-        mesh.boundary = {"boundary": mesh.boundary_faces()}
+        faces = mesh.boundary_faces()
+        mesh.boundary = ({"boundary": faces} if not isinstance(faces, dict)
+                         else {f"boundary_{k}": v for k, v in faces.items()})
     return mesh
 
 
@@ -93,7 +98,8 @@ def to_meshio(mesh: Mesh, point_data=None, cell_data=None):
     returned by the post-processing helpers) and are split per block.
     """
     meshio = _meshio()
-    points = np.column_stack([mesh.points, np.zeros(mesh.n_nodes)])
+    points = (np.column_stack([mesh.points, np.zeros(mesh.n_nodes)]) if mesh.dim == 2
+              else mesh.points)
     cells = [(name, conn) for name, conn in mesh.cells.items()]
     sizes = [conn.shape[0] for _, conn in cells]
 

@@ -61,13 +61,23 @@
 
 ## Where future capabilities go
 
-**3-D.**  Add tetrahedra/hexahedra to `core/elements.py` (shape functions,
-quadrature, faces as triangles/quads instead of edges) and let
-`core/mesh.py` carry `(n, 3)` points and face sets for the boundary.  The
-Jacobian and gradient helpers in `transport/element.py` need a 3x3 inverse,
-the Neumann integral and the traction integral need surface quadrature, and
-`TaylorHoodSpace` a third velocity block; assembly, solvers, Newton, RK45
-and the output layer do not change.  Meshio already reads 3-D Gmsh files.
+**3-D (done).**  The dimension is a property of the mesh (`Mesh.dim`,
+`(n, d)` points) and everything downstream takes it from there:
+`core/elements.py` registers `tetra`, `tetra10`, `hexahedron` and
+`hexahedron27` in meshio's VTK ordering with faces (triangles or
+quadrilaterals with outward normals), edges and the P2/P1, Q2/Q1 pairs;
+`core/quadrature.py` adds tensor hexahedral rules and a conical-product
+Gauss-Jacobi rule for tetrahedra; `transport/element.py` has
+`jacobian_nd`, `map_gradients_nd`, `physical_laplacian_nd` and
+`element_metric_nd` (the 2-D formulas are the d = 2 case, so 2-D results are
+unchanged); `_Block` carries tuples of `d` gradients and a `d x d` metric;
+`TaylorHoodSpace` numbers `[u_1, ..., u_d, p]`; the NumPy and numba kernels
+loop over components; `dirichlet_dofs`, the body force and every user
+callable take `d` coordinates (`call_coeff_nd`); `wall_traction` integrates
+over faces in 3-D; `box()` builds structured hexahedral or tetrahedral
+meshes and `read_mesh` reads 3-D Gmsh files (physical surfaces become the
+tags).  Still 2-D: the scalar transport solver (the original heat code),
+the wall distance and the Spalart-Allmaras model.
 
 **Turbulence.**  A `turbulence/` subpackage with one module per closure
 (Spalart-Allmaras, k-omega SST): each adds transported scalar(s) whose

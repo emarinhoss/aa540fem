@@ -27,7 +27,7 @@ def pressure_mass_matrix(asm, scaled: bool = True) -> sp.csr_matrix:
     Np = asm.space.Np
     rows, cols, vals = [], [], []
     for b in asm.blocks:
-        mu_q, _, _ = asm.viscosity(b)
+        mu_q, _ = asm.viscosity(b)
         weight = b.wh * (asm.problem.rho / mu_q if scaled else 1.0)
         Me = np.einsum("eq,qk,ql->ekl", weight, b.psi, b.psi)
         pd = asm.space.p_index[b.pconn]
@@ -247,4 +247,4 @@ class FieldSplitSolver:
 
 def velocity_dof_count(asm, fixed) -> int:
     """Number of velocity dofs (the first block) of an assembler's system."""
-    return 2 * asm.space.N
+    return asm.space.n_vel

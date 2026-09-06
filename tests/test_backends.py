@@ -14,8 +14,12 @@ numba = pytest.importorskip("numba")
 
 
 def meshes():
+    from aa540fem.core.mesh import box
+
     yield "quad9", geometry(2.0, 1.0, 3, "quad9")
     yield "triangle6", geometry(2.0, 1.0, 3, "triangle6")
+    yield "hexahedron27", box(2.0, 1.0, 1.0, (2, 1, 1), "hexahedron27")
+    yield "tetra10", box(2.0, 1.0, 1.0, (2, 1, 1), "tetra10")
     try:
         yield "cylinder_bl", read_mesh(MESHES / "cylinder_bl.msh")
     except ImportError:                                   # meshio missing
@@ -23,15 +27,22 @@ def meshes():
 
 
 def states(asm, rng):
-    N, ndof = asm.space.N, asm.space.ndof
+    N, ndof, d = asm.space.N, asm.space.ndof, asm.space.dim
     mesh = asm.mesh
     U = np.zeros(ndof)
     U[:N] = 1 - np.exp(-mesh.y / 0.2) + 0.1 * np.sin(mesh.x)
     U[N:2 * N] = 0.05 * np.sin(mesh.y) * np.cos(mesh.x)
-    U[2 * N:] = np.cos(mesh.x[asm.space.pressure_nodes])
+    if d == 3:
+        U[2 * N:3 * N] = 0.03 * np.sin(mesh.z) * np.cos(mesh.y)
+    U[d * N:] = np.cos(mesh.x[asm.space.pressure_nodes])
     U_old = U + 0.05 * rng.standard_normal(ndof)
     par = U + 0.1 * rng.standard_normal(ndof)
     return U, U_old, par
+
+
+def uniform(mesh, first=1.0):
+    """Dirichlet tuple with ``first`` in x and zeros elsewhere."""
+    return (first,) + (0.0,) * (mesh.dim - 1)
 
 
 def compare(a, b, tol):
@@ -56,11 +67,12 @@ OPTIONS = list(itertools.product([False, True], [False, True], ["metric", "strea
 def test_numba_matches_numpy(name, mesh, stabilisation, pspg, element_length):
     rng = np.random.default_rng(1)
     tags = list(mesh.boundary)
-    for eddy, body in ((None, None),
-                       (1e-3 * (1 + mesh.y), lambda x, y: (np.sin(x), np.cos(y)))):
+    force = (lambda x, y: (np.sin(x), np.cos(y))) if mesh.dim == 2 else \
+        (lambda x, y, z: (np.sin(x), np.cos(y), np.sin(z)))
+    for eddy, body in ((None, None), (1e-3 * (1 + mesh.y), force)):
         prob = FlowProblem(mesh, mu=1e-3, rho=1.2, stabilisation=stabilisation, pspg=pspg,
                            element_length=element_length, eddy_viscosity=eddy, body_force=body,
-                           bc={tags[0]: (1.0, 0.0), tags[1]: (0.0, 0.0)})
+                           bc={tags[0]: uniform(mesh), tags[1]: uniform(mesh, 0.0)})
         ref = FlowAssembler(prob, backend="numpy")
         fast = FlowAssembler(prob, backend="numba")
         assert fast.backend == "numba"

@@ -62,21 +62,22 @@ class DistributedFlowSystem:
         self.part = part
 
         # -- rank-by-rank global numbering ----------------------------------
+        dim = self.space.dim
+        self.dim = dim
         is_p = self.space.p_index >= 0
         n_owned = np.array([p.owned.size for p in self.parts])
         np_owned = np.array([int(is_p[p.owned].sum()) for p in self.parts])
-        offsets = np.concatenate([[0], np.cumsum(2 * n_owned + np_owned)])
-        new_ux = np.empty(mesh.n_nodes, dtype=np.int64)
-        new_uy = np.empty(mesh.n_nodes, dtype=np.int64)
+        offsets = np.concatenate([[0], np.cumsum(dim * n_owned + np_owned)])
+        new_u = [np.empty(mesh.n_nodes, dtype=np.int64) for _ in range(dim)]
         new_p = -np.ones(mesh.n_nodes, dtype=np.int64)
         for r, p in enumerate(self.parts):
-            new_ux[p.owned] = offsets[r] + np.arange(n_owned[r])
-            new_uy[p.owned] = offsets[r] + n_owned[r] + np.arange(n_owned[r])
+            for c in range(dim):
+                new_u[c][p.owned] = offsets[r] + c * n_owned[r] + np.arange(n_owned[r])
             corners = p.owned[is_p[p.owned]]
-            new_p[corners] = offsets[r] + 2 * n_owned[r] + np.arange(np_owned[r])
+            new_p[corners] = offsets[r] + dim * n_owned[r] + np.arange(np_owned[r])
         self.n = int(offsets[-1])
         self.r0, self.r1 = int(offsets[self.rank]), int(offsets[self.rank + 1])
-        self.old2new = np.concatenate([new_ux, new_uy, new_p[self.space.pressure_nodes]])
+        self.old2new = np.concatenate(new_u + [new_p[self.space.pressure_nodes]])
         assert self.old2new.size == self.space.ndof and (self.old2new >= 0).all()
 
         # -- the sub-mesh of this rank's elements ---------------------------
@@ -90,8 +91,8 @@ class DistributedFlowSystem:
                                                    eddy_viscosity=problem.eddy_viscosity[nodes])
         self.asm = FlowAssembler(self.sub_problem, backend)
         ls = self.asm.space
-        self.l2g = np.concatenate([new_ux[nodes], new_uy[nodes],
-                                   new_p[nodes[ls.pressure_nodes]]]).astype(PETSc.IntType)
+        self.l2g = np.concatenate([u[nodes] for u in new_u]
+                                  + [new_p[nodes[ls.pressure_nodes]]]).astype(PETSc.IntType)
         assert (self.l2g >= 0).all()
         self.n_local = ls.ndof
         self.owned_rows = np.nonzero((self.l2g >= self.r0) & (self.l2g < self.r1))[0]
@@ -239,10 +240,10 @@ class DistributedFlowSystem:
             pc.setFactorSolverType("mumps" if mumps_available() else "petsc")
             opts["mat_mumps_icntl_14"] = 40
         elif method == "fieldsplit":
-            n_own = self.part.owned.size
-            is_u = PETSc.IS().createStride(2 * n_own, first=self.r0, step=1, comm=self.comm)
-            is_p = PETSc.IS().createStride(self.r1 - self.r0 - 2 * n_own,
-                                           first=self.r0 + 2 * n_own, step=1, comm=self.comm)
+            n_own = self.dim * self.part.owned.size
+            is_u = PETSc.IS().createStride(n_own, first=self.r0, step=1, comm=self.comm)
+            is_p = PETSc.IS().createStride(self.r1 - self.r0 - n_own,
+                                           first=self.r0 + n_own, step=1, comm=self.comm)
             ksp.setType("fgmres")
             ksp.setTolerances(rtol=rtol, max_it=300)
             ksp.setGMRESRestart(200)
@@ -267,7 +268,7 @@ class DistributedFlowSystem:
     def _lumped_velocity_mass(self):
         """Lumped velocity mass on the owned velocity dofs (a global Vec restricted to ``is_u``)."""
         Qdiag = np.asarray(abs(self.asm.M).sum(axis=1)).ravel()
-        Qdiag[2 * self.asm.space.N:] = 0.0
+        Qdiag[self.asm.space.n_vel:] = 0.0
         q = self.A.createVecRight()
         q.setLGMap(self.lgmap)
         self.accumulate(Qdiag, q)
@@ -382,12 +383,12 @@ class DistributedFlowSystem:
         if nsteps < 1 or abs(nsteps * dt - t_end) > 1e-8 * max(1.0, abs(t_end)):
             raise ValueError(f"dt = {dt} must divide t_end = {t_end}")
         asm = self.asm
-        Nl = asm.space.N
+        nv = asm.space.n_vel
         self.set_state(U0)
         Ul = self.local_state()
         F_old = self.F_local
         S_old = asm.K @ Ul + asm.convection(Ul, jacobian=False) - F_old
-        S_old[2 * Nl:] = 0.0
+        S_old[nv:] = 0.0
         times, snapshots, newton_iterations = [0.0], [self.gather()], []
         X_old = self.X.duplicate()
         th_prev = None
@@ -401,7 +402,7 @@ class DistributedFlowSystem:
             def evaluate(Un, jacobian, U_old=U_old, F_new=F_new, S_old=S_old, th=th, t=t):
                 mt = asm.momentum_terms(Un, t=t, dt=dt, U_old=U_old, jacobian=jacobian)
                 S = asm.K @ Un + mt.N - F_new
-                S[2 * Nl:] = 0.0
+                S[nv:] = 0.0
                 R = (asm.M @ ((Un - U_old) / dt) + th * S + (1 - th) * S_old - asm.BT @ Un
                      + asm.B @ Un + mt.S)
                 if not jacobian:
@@ -422,7 +423,7 @@ class DistributedFlowSystem:
                 raise RuntimeError(f"distributed Newton did not converge at t = {t:.6g}")
             Ul = self.local_state()
             S_old = asm.K @ Ul + asm.convection(Ul, jacobian=False) - F_new
-            S_old[2 * Nl:] = 0.0
+            S_old[nv:] = 0.0
             F_old = F_new
             newton_iterations.append(info["iterations"])
             if n % store_every == 0 or n == nsteps:

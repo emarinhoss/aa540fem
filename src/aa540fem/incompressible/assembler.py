@@ -35,7 +35,7 @@ from aa540fem.backends.numpy_kernels import (
     linear_local,
     momentum_local,
 )
-from aa540fem.core.util import values_at, values_rate
+from aa540fem.core.util import values_at_nd, values_rate_nd
 from aa540fem.incompressible.problem import OPEN, FlowProblem, values_at_pair
 from aa540fem.incompressible.space import TaylorHoodSpace, _Block
 
@@ -83,44 +83,49 @@ class FlowAssembler:
                                                           [b.ldof for b in self.blocks])
         maps = [self.pattern.scatter_map(b.ldof, b.ldof) for b in self.blocks]
         self.plan = ScatterPlan(self.pattern, maps)                              # (ne, L, L)
-        self.plan_uu = ScatterPlan(self.pattern, [m[:, :2 * b.n, :2 * b.n]
+        self.plan_uu = ScatterPlan(self.pattern, [m[:, :b.dim * b.n, :b.dim * b.n]
                                                   for m, b in zip(maps, self.blocks)])
         self._linear_matrices()
 
     # -- coefficients -------------------------------------------------
     def viscosity(self, b):
-        """``mu_eff`` and its gradient at the quadrature points of block ``b``."""
+        """``mu_eff`` and the tuple of its ``d`` gradient components at the
+        quadrature points of block ``b``."""
         mu = self.problem.mu
         if self.mu_t is None:
             zero = np.zeros_like(b.X)
-            return np.full_like(b.X, mu), zero, zero
+            return np.full_like(b.X, mu), (zero,) * b.dim
         mt = self.mu_t[b.conn]
-        return (mu + mt @ b.phi.T, np.einsum("eqi,ei->eq", b.dphi_dx, mt),
-                np.einsum("eqi,ei->eq", b.dphi_dy, mt))
+        return (mu + mt @ b.phi.T,
+                tuple(np.einsum("eqi,ei->eq", b.dphi[k], mt) for k in range(b.dim)))
 
     def _body_force(self, b, t):
         if self.problem.body_force is None:
             return None
-        return tuple(np.broadcast_to(np.asarray(v, dtype=float), b.X.shape)
-                     for v in values_at_pair(self.problem.body_force, b.X, b.Y, t))
+        values = values_at_pair(self.problem.body_force, b.Xq, t)
+        if len(values) != b.dim:
+            raise ValueError(f"body_force must return {b.dim} components")
+        return tuple(np.broadcast_to(np.asarray(v, dtype=float), b.X.shape) for v in values)
 
     # -- constant matrices --------------------------------------------
     def _linear_matrices(self):
         rho = self.problem.rho
-        Ke, Me, Bxe, Bye, BTe = [], [], [], [], []
+        d = self.space.dim
+        Ke, Me, BTe = [], [], []
+        Bke = [[] for _ in range(d)]
         for b in self.blocks:
-            mu_q, dmu_dx, dmu_dy = self.viscosity(b)
-            k, m, bx, by, bt = linear_local(b, mu_q, dmu_dx, dmu_dy, rho, self.mu_t is not None)
+            mu_q, dmu = self.viscosity(b)
+            k, m, bk, bt = linear_local(b, mu_q, dmu, rho, self.mu_t is not None)
             Ke.append(k)
             Me.append(m)
-            Bxe.append(bx)
-            Bye.append(by)
             BTe.append(bt)
+            for c in range(d):
+                Bke[c].append(bk[c])
         self.K_data = self.plan.assemble(Ke, backend=self.backend)
         self.M_data = self.plan.assemble(Me, backend=self.backend)
-        self.Bx_data = self.plan.assemble(Bxe, backend=self.backend)
-        self.By_data = self.plan.assemble(Bye, backend=self.backend)
-        self.B_data = self.Bx_data + self.By_data
+        self.Bk_data = [self.plan.assemble(Bke[c], backend=self.backend) for c in range(d)]
+        self.Bx_data, self.By_data = self.Bk_data[0], self.Bk_data[1]
+        self.B_data = sum(self.Bk_data)
         self.BT_data = self.plan.assemble(BTe, backend=self.backend)
         self.K = self.pattern.matrix(self.K_data)
         self.M = self.pattern.matrix(self.M_data)
@@ -135,9 +140,8 @@ class FlowAssembler:
         if self.problem.body_force is None:
             return F
         for b in self.blocks:
-            fx, fy = self._body_force(b, t)
-            F += scatter_vector(self.space.ndof, b.ldof[:, :2 * b.n],
-                                body_load_local(b, fx, fy, self.problem.rho))
+            F += scatter_vector(self.space.ndof, b.ldof[:, :b.dim * b.n],
+                                body_load_local(b, self._body_force(b, t), self.problem.rho))
         return F
 
     # -- nonlinear terms ----------------------------------------------
@@ -173,11 +177,11 @@ class FlowAssembler:
         S = np.zeros(sp_.ndof)
         JN_e, JS_e = [], []
         for b in self.blocks:
-            mu_q, dmu_dx, dmu_dy = self.viscosity(b)
+            mu_q, dmu = self.viscosity(b)
             body = self._body_force(b, t) if (stab or pspg) else None
-            Ne, Se, JNe, JSe = momentum_local(b, U, par, old, mu_q, dmu_dx, dmu_dy, body, options,
+            Ne, Se, JNe, JSe = momentum_local(b, U, par, old, mu_q, dmu, body, options,
                                               self.backend)
-            N += scatter_vector(sp_.ndof, b.ldof[:, :2 * b.n], Ne)
+            N += scatter_vector(sp_.ndof, b.ldof[:, :b.dim * b.n], Ne)
             if Se is not None:
                 S += scatter_vector(sp_.ndof, b.ldof, Se)
             if jacobian:
@@ -234,21 +238,21 @@ def dirichlet_dofs(problem: FlowProblem, space: TaylorHoodSpace, t=0.0, rate: bo
     (see :meth:`FlowAssembler.dirichlet`); needs no assembler, so a
     distributed solver can evaluate it from the mesh alone."""
     mesh = problem.mesh
-    evaluate = values_rate if rate else values_at
+    evaluate = values_rate_nd if rate else values_at_nd
     fixed = {}
     for tag, spec in problem.bc.items():
         if spec == OPEN:
             continue
         nodes = mesh.bc_nodes[tag]
+        coords = tuple(c[nodes] for c in mesh.coords)
         for comp, val in enumerate(spec):
             if val is None:
                 continue
-            dofs = space.dof_ux(nodes) if comp == 0 else space.dof_uy(nodes)
-            vals = evaluate(val, mesh.x[nodes], mesh.y[nodes], t)
-            fixed.update(zip(dofs.tolist(), vals.tolist()))
+            vals = evaluate(val, coords, t)
+            fixed.update(zip(space.dof_u(comp, nodes).tolist(), vals.tolist()))
     if problem.pins_pressure:
         node = space.pressure_nodes[0]
         fixed[int(space.dof_p([node])[0])] = 0.0 if rate else float(
-            values_at(problem.pin_value, mesh.x[[node]], mesh.y[[node]])[0])
+            values_at_nd(problem.pin_value, tuple(c[[node]] for c in mesh.coords))[0])
     dofs = np.array(sorted(fixed), dtype=int)
     return dofs, np.array([fixed[d] for d in dofs])

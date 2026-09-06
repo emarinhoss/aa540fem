@@ -6,13 +6,15 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from aa540fem.core.elements import PRESSURE_ELEMENT, get_element
+from aa540fem.core.elements import FACE_CORNERS, PRESSURE_ELEMENT, get_element
 from aa540fem.core.mesh import Mesh
-from aa540fem.core.quadrature import gauss_legendre_quad
+from aa540fem.core.quadrature import gauss_legendre_quad, quadrature_points
 from aa540fem.incompressible.assembler import FlowAssembler
 from aa540fem.incompressible.problem import FlowProblem
 from aa540fem.incompressible.space import TaylorHoodSpace
-from aa540fem.transport.element import physical_gradients
+from aa540fem.transport.element import jacobian_nd, map_gradients_nd, physical_gradients
+
+AXES = "xyz"
 
 
 @dataclass
@@ -36,9 +38,21 @@ class FlowSolution:
         return self.space.split(self.U)[1]
 
     @property
+    def w(self) -> np.ndarray:
+        """Third velocity component (3-D only)."""
+        if self.space.dim < 3:
+            raise AttributeError("a 2-D solution has no w component")
+        return self.space.split(self.U)[2]
+
+    @property
+    def velocity(self) -> np.ndarray:
+        """Velocity components as a ``(d, N)`` array."""
+        return self.space.velocity(self.U)
+
+    @property
     def p(self) -> np.ndarray:
         """Pressure on the pressure (corner) nodes."""
-        return self.space.split(self.U)[2]
+        return self.space.split(self.U)[-1]
 
     @property
     def p_nodal(self) -> np.ndarray:
@@ -47,14 +61,14 @@ class FlowSolution:
 
     @property
     def speed(self) -> np.ndarray:
-        return np.hypot(self.u, self.v)
+        return np.linalg.norm(self.velocity, axis=0)
 
     def divergence_norm(self) -> float:
         """L2 norm of ``div u`` (a check of incompressibility)."""
         total = 0.0
+        vel = self.velocity
         for b in self._assembler().blocks:
-            div = (np.einsum("eqi,ei->eq", b.dphi_dx, self.u[b.conn])
-                   + np.einsum("eqi,ei->eq", b.dphi_dy, self.v[b.conn]))
+            div = sum(np.einsum("eqi,ei->eq", b.dphi[c], vel[c][b.conn]) for c in range(b.dim))
             total += np.sum(b.wh * div ** 2)
         return float(np.sqrt(total))
 
@@ -64,31 +78,37 @@ class FlowSolution:
         return self.assembler
 
     def forces(self, tag: str, order: int = 3):
-        """Force ``(Fx, Fy)`` exerted by the fluid on the boundary ``tag``.
+        """Force ``(Fx, Fy[, Fz])`` exerted by the fluid on the boundary ``tag``.
 
         Integrates the traction of ``sigma = -p I + mu (grad u + grad u^T)``
-        over the edges of the tag, using the parent elements' gradients.
+        over the faces of the tag, using the parent elements' gradients.
         """
         return traction_forces(self, tag, order)
 
     def wall_traction(self, tag: str, order: int = 3) -> dict:
-        """Traction exerted by the fluid on the boundary ``tag`` at the edge
+        """Traction exerted by the fluid on the boundary ``tag`` at the face
         quadrature points, sorted along ``x``.
 
-        Returns a dict of flat arrays: ``x``, ``y``, ``tx``, ``ty`` (force per
-        unit length on the wall), ``nx``, ``ny`` (outward normal of the fluid
-        domain), ``p`` and ``weight`` (quadrature weight times edge length,
-        so that ``sum(weight * tx)`` is the force).  The skin friction
-        coefficient is ``2 tx / (rho U^2)`` on a wall aligned with ``x``.
+        Returns a dict of flat arrays: ``x``, ``y``[, ``z``], ``tx``, ``ty``
+        [, ``tz``] (force per unit length / area on the wall), ``nx``, ``ny``
+        [, ``nz``] (outward normal of the fluid domain), ``p`` and ``weight``
+        (quadrature weight times edge length or face area, so that
+        ``sum(weight * tx)`` is the force).  The skin friction coefficient is
+        ``2 tx / (rho U^2)`` on a wall aligned with ``x``.  In 3-D ``order``
+        is the quadrature order of the face element (``None``: its default).
         """
         return wall_traction(self, tag, order)
+
+    def velocity_3d(self) -> np.ndarray:
+        """Velocity as an ``(N, 3)`` array (zero third component in 2-D) for output."""
+        vel = self.velocity.T
+        return vel if vel.shape[1] == 3 else np.column_stack([vel, np.zeros(self.space.N)])
 
     def save(self, path):
         """Write velocity (3-component vector), speed and pressure for ParaView."""
         from aa540fem.io.mesh_files import write_vtk
-        vel = np.column_stack([self.u, self.v, np.zeros(self.space.N)])
-        return write_vtk(path, self.mesh, point_data={"velocity": vel, "speed": self.speed,
-                                                      "p": self.p_nodal})
+        return write_vtk(path, self.mesh, point_data={"velocity": self.velocity_3d(),
+                                                      "speed": self.speed, "p": self.p_nodal})
 
 
 def wall_traction(sol: FlowSolution, tag: str, order: int = 3) -> dict:
@@ -96,6 +116,8 @@ def wall_traction(sol: FlowSolution, tag: str, order: int = 3) -> dict:
     mu = sol.problem.mu
     if tag not in mesh.boundary:
         raise ValueError(f"Unknown boundary tag {tag!r}; mesh has {mesh.tags}")
+    if mesh.dim == 3:
+        return _wall_traction_3d(sol, tag, order)
     s, w1 = gauss_legendre_quad(order)
     p_nodal = sol.p_nodal
     out = {k: [] for k in ("x", "y", "tx", "ty", "nx", "ny", "p", "weight")}
@@ -151,10 +173,67 @@ def wall_traction(sol: FlowSolution, tag: str, order: int = 3) -> dict:
     return {k: v[order_] for k, v in out.items()}
 
 
+def _wall_traction_3d(sol: FlowSolution, tag: str, order) -> dict:
+    """3-D version of :func:`wall_traction`: quadrature on the boundary faces
+    (triangles or quadrilaterals) mapped into the parent elements."""
+    mesh = sol.mesh
+    mu = sol.problem.mu
+    vel = sol.velocity
+    p_nodal = sol.p_nodal
+    keys = [f"{a}" for a in AXES] + [f"t{a}" for a in AXES] + [f"n{a}" for a in AXES]
+    out = {k: [] for k in keys + ["p", "weight"]}
+    for name, conn in mesh.cells.items():
+        el = get_element(name)
+        pel = PRESSURE_ELEMENT[name]
+        fel = get_element(el.face_type)
+        ref = np.array(el.nodes, dtype=float)
+        fcoords, fw = quadrature_points(fel.family, fel.full_order if order in (None, 3)
+                                        else order)
+        fphi, fdnat = fel.shape_at(fcoords)                     # face shape functions
+        for face in el.faces:
+            sel = boundary_face_elements(mesh, tag, name, face)
+            if sel.size == 0:
+                continue
+            ce = conn[sel]
+            # face quadrature points in the parent's natural coordinates (faces are
+            # flat in reference space, so the face interpolation is exact)
+            nat = tuple(fphi @ ref[list(face), k] for k in range(3))
+            phi, dnat = el.shape_at(nat)
+            psi = pel.shape(*nat)[0]
+            xe = tuple(mesh.points[ce, k] for k in range(3))
+            _, inverse = jacobian_nd(xe, dnat)
+            dphi = map_gradients_nd(inverse, dnat)
+            grad = [[np.einsum("eqi,ei->eq", dphi[k], vel[c][ce]) for k in range(3)]
+                    for c in range(3)]
+            pq = p_nodal[ce[:, :pel.n_nodes]] @ psi.T
+            # tangents of the face from its own shape functions, normal = t1 x t2
+            fn = ce[:, list(face)]
+            t1 = [mesh.points[fn, k] @ fdnat[0].T for k in range(3)]
+            t2 = [mesh.points[fn, k] @ fdnat[1].T for k in range(3)]
+            nvec = [t1[1] * t2[2] - t1[2] * t2[1], t1[2] * t2[0] - t1[0] * t2[2],
+                    t1[0] * t2[1] - t1[1] * t2[0]]
+            dA = np.sqrt(sum(c * c for c in nvec))
+            nrm = [c / dA for c in nvec]                        # outward normal of the fluid
+            sigma = [[(-pq if c == k else 0.0) + mu * (grad[c][k] + grad[k][c]) for k in range(3)]
+                     for c in range(3)]
+            for c in range(3):
+                out[f"t{AXES[c]}"].append(-sum(sigma[c][k] * nrm[k] for k in range(3)).ravel())
+                out[f"n{AXES[c]}"].append(nrm[c].ravel())
+                out[AXES[c]].append((xe[c] @ phi.T).ravel())
+            out["p"].append(pq.ravel())
+            out["weight"].append((fw[None, :] * dA).ravel())
+    if not out["x"]:
+        return {k: np.zeros(0) for k in out}
+    out = {k: np.concatenate(v) for k, v in out.items()}
+    order_ = np.argsort(out["x"], kind="stable")
+    return {k: v[order_] for k, v in out.items()}
+
+
 def traction_forces(sol: FlowSolution, tag: str, order: int = 3):
-    """Force ``(Fx, Fy)`` on the boundary ``tag``: the integral of :func:`wall_traction`."""
+    """Force ``(Fx, Fy[, Fz])`` on the boundary ``tag``: the integral of
+    :func:`wall_traction`."""
     tr = wall_traction(sol, tag, order)
-    return float(np.sum(tr["weight"] * tr["tx"])), float(np.sum(tr["weight"] * tr["ty"]))
+    return tuple(float(np.sum(tr["weight"] * tr[f"t{AXES[c]}"])) for c in range(sol.space.dim))
 
 
 @dataclass
@@ -186,9 +265,8 @@ class TransientFlowSolution:
 
         def write_step(path, i):
             sol = self.at(i)
-            vel = np.column_stack([sol.u, sol.v, np.zeros(self.space.N)])
-            write_vtk(path, self.mesh,
-                      point_data={"velocity": vel, "speed": sol.speed, "p": sol.p_nodal})
+            write_vtk(path, self.mesh, point_data={"velocity": sol.velocity_3d(),
+                                                   "speed": sol.speed, "p": sol.p_nodal})
 
         return write_series(prefix, self.times, write_step)
 
@@ -200,11 +278,18 @@ def boundary_face_elements(mesh, tag, name, face):
     cache = mesh.__dict__.setdefault("_face_cache", {})
     key = (tag, name, tuple(face))
     if key not in cache:
-        edges = np.sort(mesh.boundary[tag][:, :2], axis=1)
-        wanted = edges[:, 0] * mesh.n_nodes + edges[:, 1]
-        conn = mesh.cells[name]
-        pair = np.sort(conn[:, list(face[:2])], axis=1)
-        keys = pair[:, 0] * mesh.n_nodes + pair[:, 1]
-        cache[key] = np.nonzero(np.isin(keys, wanted))[0]
+        el = get_element(name)
+        nc = FACE_CORNERS[el.face_type]
+        wanted = np.sort(mesh.boundary[tag][:, :nc], axis=1)
+        have = np.sort(mesh.cells[name][:, list(face[:nc])], axis=1)
+        if wanted.size == 0:
+            cache[key] = np.zeros(0, dtype=int)
+        else:
+            both = np.vstack([wanted, have])
+            _, inverse = np.unique(both, axis=0, return_inverse=True)
+            inverse = inverse.ravel()
+            in_tag = np.zeros(inverse.max() + 1, dtype=bool)
+            in_tag[inverse[:wanted.shape[0]]] = True
+            cache[key] = np.nonzero(in_tag[inverse[wanted.shape[0]:]])[0]
     return cache[key]
 

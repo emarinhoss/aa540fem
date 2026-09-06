@@ -26,12 +26,13 @@ jobs:
       - name: Install numba
         run: python -m pip install -e ".[numba,hw]"
       - name: Test (numba kernels)
-        run: python -m pytest -q tests/test_backends.py tests/test_flow.py tests/test_stabilisation.py tests/test_turbulence.py tests/test_hardware.py
+        run: python -m pytest -q tests/test_backends.py tests/test_flow.py tests/test_flow3d.py tests/test_stabilisation.py tests/test_turbulence.py tests/test_hardware.py
       - name: Run the examples and scripts
         run: |
           python examples/heat_rectangle.py -o ''
           python examples/annulus.py --mesh examples/meshes/annulus_quad9.msh --method cg --no-plot
           python scripts/convergence.py --elems 4 8
+          python examples/channel3d.py --no-prompt --no-plot --elems 2 2 1 --outdir /tmp/ch3d
           python scripts/convergence.py --transient --dts 0.005 0.0025
           python examples/convection_diffusion.py --no-plot
           python examples/rotating_hill.py --no-plot --steps 100 --series ''

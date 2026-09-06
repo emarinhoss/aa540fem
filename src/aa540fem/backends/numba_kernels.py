@@ -1,15 +1,17 @@
-"""Threaded (numba) element kernels of the Navier-Stokes assembly.
+"""Threaded (numba) element kernels of the Navier-Stokes assembly (2-D and 3-D).
 
 Same element-local outputs as :mod:`aa540fem.backends.numpy_kernels`
-(``N_e (ne, 2n)``, ``S_e (ne, L)``, ``JN_e (ne, 2n, 2n)``, ``JS_e (ne, L, L)``
-in the layout ``[u_x nodes, u_y nodes, p corner nodes]``), computed with one
-explicit loop nest per element, the element loop in ``prange``.  Threads
-write disjoint element slices only; the global scatter is the deterministic
-:func:`segmented_reduce`, so results do not depend on the thread count.
+(``N_e (ne, d n)``, ``S_e (ne, L)``, ``JN_e (ne, d n, d n)``, ``JS_e (ne, L, L)``
+in the layout ``[u_1 nodes, ..., u_d nodes, p corner nodes]``), computed
+with one explicit loop nest per element, the element loop in ``prange``.
+Threads write disjoint element slices only; the global scatter is the
+deterministic :func:`segmented_reduce`, so results do not depend on the
+thread count.  Gradients are passed stacked over the ``d`` directions
+(``dphi (d, ne, nq, n)``) and the velocity components as ``(d, ne, n)``.
 
 The kernels compile on first use (a few seconds) and are cached on disk
 (``NUMBA_CACHE_DIR`` or the package directory); :func:`warmup` compiles
-them on a two-element mesh.
+them on small meshes.
 """
 
 from __future__ import annotations
@@ -34,20 +36,29 @@ def segmented_reduce(vals, perm, seg_start, out):
 
 # -- stabilisation parameters at one quadrature point -----------------
 @njit(cache=True, nogil=True)
-def _params_metric(upq, vpq, nu, inv_dt2, grad_div, gxx, gxy, gyy):
-    gux = gxx * upq + gxy * vpq
-    guy = gxy * upq + gyy * vpq
-    q2 = upq * gux + vpq * guy
-    gg = gxx * gxx + 2.0 * gxy * gxy + gyy * gyy
+def _params_metric(upq, nu, inv_dt2, grad_div, G, dtau, dgamma):
+    """``tau, gamma`` from the metric tensor ``G (d, d)``; the derivatives with
+    respect to the velocity components are written into ``dtau``, ``dgamma``."""
+    d = upq.shape[0]
+    gu = np.empty(d)
+    q2 = 0.0
+    gg = 0.0
+    umag2 = 0.0
+    for c in range(d):
+        s = 0.0
+        for k in range(d):
+            s += G[c, k] * upq[k]
+            gg += G[c, k] * G[c, k]
+        gu[c] = s
+        q2 += upq[c] * s
+        umag2 += upq[c] * upq[c]
     tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * nu * nu * gg)
     tau3 = tau * tau * tau
-    dtau_x = -tau3 * gux
-    dtau_y = -tau3 * guy
+    for c in range(d):
+        dtau[c] = -tau3 * gu[c]
+        dgamma[c] = 0.0
     gamma = 0.0
-    dgamma_x = 0.0
-    dgamma_y = 0.0
     if grad_div and q2 > 0.0:
-        umag2 = upq * upq + vpq * vpq
         q = np.sqrt(q2)
         hu2 = umag2 / q
         re_h = hu2 / nu
@@ -55,41 +66,50 @@ def _params_metric(upq, vpq, nu, inv_dt2, grad_div, gxx, gxy, gyy):
             gamma = hu2 * re_h / 3.0
             c1 = 4.0 * umag2 / (3.0 * nu * q2)
             c2 = 2.0 * umag2 * umag2 / (3.0 * nu * q2 * q2)
-            dgamma_x = c1 * upq - c2 * gux
-            dgamma_y = c1 * vpq - c2 * guy
+            for c in range(d):
+                dgamma[c] = c1 * upq[c] - c2 * gu[c]
         else:
             gamma = hu2
             q3 = q * q * q
-            dgamma_x = 2.0 * upq / q - umag2 * gux / q3
-            dgamma_y = 2.0 * vpq / q - umag2 * guy / q3
-    return tau, gamma, dtau_x, dtau_y, dgamma_x, dgamma_y
+            for c in range(d):
+                dgamma[c] = 2.0 * upq[c] / q - umag2 * gu[c] / q3
+    return tau, gamma
 
 
 @njit(cache=True, nogil=True)
-def _params_streamline(upq, vpq, nu, inv_dt2, grad_div, dphi_dx_q, dphi_dy_q):
-    n = dphi_dx_q.shape[0]
-    umag = np.hypot(upq, vpq)
+def _params_streamline(upq, nu, inv_dt2, grad_div, dphi_q, dtau, dgamma):
+    """Tezduyar's ``tau, gamma`` with the flow-direction length; ``dphi_q`` is
+    ``(d, n)`` at the quadrature point."""
+    d = upq.shape[0]
+    n = dphi_q.shape[1]
+    umag2 = 0.0
+    for c in range(d):
+        umag2 += upq[c] * upq[c]
+    umag = np.sqrt(umag2)
     moving = umag > 0.0
+    s = np.empty(d)
     if moving:
-        sx = upq / umag
-        sy = vpq / umag
+        for c in range(d):
+            s[c] = upq[c] / umag
         inv_u = 1.0 / umag
     else:
-        sx = 1.0
-        sy = 0.0
+        for c in range(d):
+            s[c] = 0.0
+        s[0] = 1.0
         inv_u = 0.0
     ssum = 0.0
-    sgx = 0.0
-    sgy = 0.0
+    sg_sum = np.zeros(d)                       # sum_i sign(s . grad phi_i) grad phi_i
     for i in range(n):
-        sg = sx * dphi_dx_q[i] + sy * dphi_dy_q[i]
+        sg = 0.0
+        for c in range(d):
+            sg += s[c] * dphi_q[c, i]
         ssum += abs(sg)
         if sg > 0.0:
-            sgx += dphi_dx_q[i]
-            sgy += dphi_dy_q[i]
+            for c in range(d):
+                sg_sum[c] += dphi_q[c, i]
         elif sg < 0.0:
-            sgx -= dphi_dx_q[i]
-            sgy -= dphi_dy_q[i]
+            for c in range(d):
+                sg_sum[c] -= dphi_q[c, i]
     if ssum < 1e-300:
         ssum = 1e-300
     h = 2.0 / ssum
@@ -113,25 +133,24 @@ def _params_streamline(upq, vpq, nu, inv_dt2, grad_div, dphi_dx_q, dphi_dy_q):
     tau3 = tau * tau * tau
     dtau_du = -(4.0 / h2) * umag * tau3
     dtau_dh = tau3 * (4.0 * umag * umag / (h2 * h) + 32.0 * nu * nu / (h2 * h2 * h))
-    dh_dsx = -0.5 * h2 * sgx
-    dh_dsy = -0.5 * h2 * sgy
-    dh_dux = (dh_dsx * (1.0 - sx * sx) - dh_dsy * sy * sx) * inv_u
-    dh_duy = (-dh_dsx * sx * sy + dh_dsy * (1.0 - sy * sy)) * inv_u
-    dir_x = sx * (1.0 if moving else 0.0)
-    dir_y = sy * (1.0 if moving else 0.0)
-    dtau_x = dtau_du * dir_x + dtau_dh * dh_dux
-    dtau_y = dtau_du * dir_y + dtau_dh * dh_duy
-    dgamma_x = dgamma_du * dir_x + dgamma_dh * dh_dux
-    dgamma_y = dgamma_du * dir_y + dgamma_dh * dh_duy
-    return tau, gamma, dtau_x, dtau_y, dgamma_x, dgamma_y
+    for k in range(d):
+        dh_du = 0.0
+        for m in range(d):
+            dh_ds_m = -0.5 * h2 * sg_sum[m]
+            delta = 1.0 if m == k else 0.0
+            dh_du += dh_ds_m * (delta - s[m] * s[k])
+        dh_du *= inv_u
+        dir_k = s[k] if moving else 0.0
+        dtau[k] = dtau_du * dir_k + dtau_dh * dh_du
+        dgamma[k] = dgamma_du * dir_k + dgamma_dh * dh_du
+    return tau, gamma
 
 
 # -- momentum equations -----------------------------------------------
 @njit(parallel=True, cache=True, nogil=True)
-def momentum_kernel(phi, dphi_dx, dphi_dy, lap_phi, psi, dpsi_dx, dpsi_dy, wh, gxx, gxy, gyy,
-                    ue, ve, pe, uoe, voe, upe, vpe, mu_q, dmu_dx, dmu_dy, fx, fy,
+def momentum_kernel(phi, dphi, lap_phi, psi, dpsi, wh, G, ue, pe, uoe, upe, mu_q, dmu, f,
                     rho, inv_dt, inv_dt2, flags, N_e, S_e, JN_e, JS_e):
-    ne, nq, n = dphi_dx.shape
+    d, ne, nq, n = dphi.shape
     nc = psi.shape[1]
     stab = flags[STAB] != 0
     pspg = flags[PSPG] != 0
@@ -143,194 +162,192 @@ def momentum_kernel(phi, dphi_dx, dphi_dy, lap_phi, psi, dpsi_dx, dpsi_dy, wh, g
     jac = flags[JACOBIAN] != 0
     stabilised = stab or pspg
     for e in prange(ne):
+        uq = np.empty(d)
+        upq = np.empty(d)
+        grad = np.empty((d, d))                  # grad[c, k] = d u_c / d x_k
+        lap = np.empty(d)
+        conv = np.empty(d)
+        R = np.empty(d)
+        dtau = np.empty(d)
+        dgamma = np.empty(d)
         ugrad = np.empty(n)
-        dc00 = np.empty(n)
-        dc01 = np.empty(n)
-        dc10 = np.empty(n)
-        dc11 = np.empty(n)
-        dr00 = np.empty(n)
-        dr01 = np.empty(n)
-        dr10 = np.empty(n)
-        dr11 = np.empty(n)
+        dvisc = np.empty(n)
+        dc = np.empty((d, d, n))
+        dr = np.empty((d, d, n))
+        gradR = np.empty(nc)
         for q in range(nq):
             w = wh[e, q]
-            uq = 0.0
-            vq = 0.0
-            dudx = 0.0
-            dudy = 0.0
-            dvdx = 0.0
-            dvdy = 0.0
-            lapu = 0.0
-            lapv = 0.0
-            for i in range(n):
-                uq += phi[q, i] * ue[e, i]
-                vq += phi[q, i] * ve[e, i]
-                dudx += dphi_dx[e, q, i] * ue[e, i]
-                dudy += dphi_dy[e, q, i] * ue[e, i]
-                dvdx += dphi_dx[e, q, i] * ve[e, i]
-                dvdy += dphi_dy[e, q, i] * ve[e, i]
-                lapu += lap_phi[e, q, i] * ue[e, i]
-                lapv += lap_phi[e, q, i] * ve[e, i]
-            for i in range(n):
-                ugrad[i] = uq * dphi_dx[e, q, i] + vq * dphi_dy[e, q, i]
-            conv0 = rho * (uq * dudx + vq * dudy)
-            conv1 = rho * (uq * dvdx + vq * dvdy)
-            for i in range(n):
-                N_e[e, i] += w * conv0 * phi[q, i]
-                N_e[e, n + i] += w * conv1 * phi[q, i]
-            for j in range(n):
-                dc00[j] = rho * (ugrad[j] + dudx * phi[q, j])
-                dc01[j] = rho * dudy * phi[q, j]
-                dc10[j] = rho * dvdx * phi[q, j]
-                dc11[j] = rho * (ugrad[j] + dvdy * phi[q, j])
-            if jac:
+            for c in range(d):
+                uq[c] = 0.0
+                lap[c] = 0.0
+                for k in range(d):
+                    grad[c, k] = 0.0
                 for i in range(n):
-                    wp = w * phi[q, i]
+                    uq[c] += phi[q, i] * ue[c, e, i]
+                    lap[c] += lap_phi[e, q, i] * ue[c, e, i]
+                    for k in range(d):
+                        grad[c, k] += dphi[k, e, q, i] * ue[c, e, i]
+            for i in range(n):
+                s = 0.0
+                for k in range(d):
+                    s += uq[k] * dphi[k, e, q, i]
+                ugrad[i] = s
+            for c in range(d):
+                s = 0.0
+                for k in range(d):
+                    s += uq[k] * grad[c, k]
+                conv[c] = rho * s
+                for i in range(n):
+                    N_e[e, c * n + i] += w * conv[c] * phi[q, i]
+            for c in range(d):
+                for k in range(d):
                     for j in range(n):
-                        JN_e[e, i, j] += wp * dc00[j]
-                        JN_e[e, i, n + j] += wp * dc01[j]
-                        JN_e[e, n + i, j] += wp * dc10[j]
-                        JN_e[e, n + i, n + j] += wp * dc11[j]
+                        dc[c, k, j] = rho * ((ugrad[j] if c == k else 0.0)
+                                             + grad[c, k] * phi[q, j])
+            if jac:
+                for c in range(d):
+                    for k in range(d):
+                        for i in range(n):
+                            wp = w * phi[q, i]
+                            for j in range(n):
+                                JN_e[e, c * n + i, k * n + j] += wp * dc[c, k, j]
             if not stabilised:
                 continue
 
             # strong momentum residual and its derivatives
             mu = mu_q[e, q]
-            dmx = dmu_dx[e, q]
-            dmy = dmu_dy[e, q]
             nu = mu / rho
-            visc0 = -mu * lapu - (dmx * dudx + dmy * dudy) - (dmx * dudx + dmy * dvdx)
-            visc1 = -mu * lapv - (dmx * dvdx + dmy * dvdy) - (dmx * dudy + dmy * dvdy)
-            gpx = 0.0
-            gpy = 0.0
-            for k in range(nc):
-                gpx += dpsi_dx[e, q, k] * pe[e, k]
-                gpy += dpsi_dy[e, q, k] * pe[e, k]
-            R0 = conv0 + visc0 + gpx
-            R1 = conv1 + visc1 + gpy
-            if body:
-                R0 -= rho * fx[e, q]
-                R1 -= rho * fy[e, q]
-            if transient:
-                uo = 0.0
-                vo = 0.0
-                for i in range(n):
-                    uo += phi[q, i] * uoe[e, i]
-                    vo += phi[q, i] * voe[e, i]
-                R0 += rho * (uq - uo) * inv_dt
-                R1 += rho * (vq - vo) * inv_dt
+            for c in range(d):
+                visc = -mu * lap[c]
+                for k in range(d):
+                    visc -= dmu[k, e, q] * grad[c, k] + dmu[k, e, q] * grad[k, c]
+                gp = 0.0
+                for m in range(nc):
+                    gp += dpsi[c, e, q, m] * pe[e, m]
+                R[c] = conv[c] + visc + gp
+                if body:
+                    R[c] -= rho * f[c, e, q]
+                if transient:
+                    uo = 0.0
+                    for i in range(n):
+                        uo += phi[q, i] * uoe[c, e, i]
+                    R[c] += rho * (uq[c] - uo) * inv_dt
             # stabilisation parameters at the parameter state
-            upq = 0.0
-            vpq = 0.0
-            for i in range(n):
-                upq += phi[q, i] * upe[e, i]
-                vpq += phi[q, i] * vpe[e, i]
+            for c in range(d):
+                s = 0.0
+                for i in range(n):
+                    s += phi[q, i] * upe[c, e, i]
+                upq[c] = s
             if metric:
-                tau, gamma, dtau_x, dtau_y, dgamma_x, dgamma_y = _params_metric(
-                    upq, vpq, nu, inv_dt2, grad_div, gxx[e, q], gxy[e, q], gyy[e, q])
+                tau, gamma = _params_metric(upq, nu, inv_dt2, grad_div, G[e, q], dtau, dgamma)
             else:
-                tau, gamma, dtau_x, dtau_y, dgamma_x, dgamma_y = _params_streamline(
-                    upq, vpq, nu, inv_dt2, grad_div, dphi_dx[e, q], dphi_dy[e, q])
-            div = dudx + dvdy
+                tau, gamma = _params_streamline(upq, nu, inv_dt2, grad_div, dphi[:, e, q, :],
+                                                dtau, dgamma)
+            div = 0.0
+            for c in range(d):
+                div += grad[c, c]
             if stab:
                 for i in range(n):
                     wi = tau * ugrad[i]
-                    S_e[e, i] += w * (R0 * wi + gamma * div * dphi_dx[e, q, i])
-                    S_e[e, n + i] += w * (R1 * wi + gamma * div * dphi_dy[e, q, i])
+                    for c in range(d):
+                        S_e[e, c * n + i] += w * (R[c] * wi + gamma * div * dphi[c, e, q, i])
             if pspg:
-                for k in range(nc):
-                    gradR = dpsi_dx[e, q, k] * R0 + dpsi_dy[e, q, k] * R1
-                    S_e[e, 2 * n + k] += w * tau * gradR
+                for m in range(nc):
+                    s = 0.0
+                    for c in range(d):
+                        s += dpsi[c, e, q, m] * R[c]
+                    gradR[m] = s
+                    S_e[e, d * n + m] += w * tau * s
             if not jac:
                 continue
             for j in range(n):
-                dvisc = (mu * lap_phi[e, q, j] + dmx * dphi_dx[e, q, j]
-                         + dmy * dphi_dy[e, q, j])
-                dr00[j] = dc00[j] - dvisc - dmx * dphi_dx[e, q, j]
-                dr01[j] = dc01[j] - dmy * dphi_dx[e, q, j]
-                dr10[j] = dc10[j] - dmx * dphi_dy[e, q, j]
-                dr11[j] = dc11[j] - dvisc - dmy * dphi_dy[e, q, j]
-                if transient:
-                    dr00[j] += rho * phi[q, j] * inv_dt
-                    dr11[j] += rho * phi[q, j] * inv_dt
+                s = mu * lap_phi[e, q, j]
+                for k in range(d):
+                    s += dmu[k, e, q] * dphi[k, e, q, j]
+                dvisc[j] = s
+            for c in range(d):
+                for k in range(d):
+                    for j in range(n):
+                        v = dc[c, k, j] - dmu[k, e, q] * dphi[c, e, q, j]
+                        if c == k:
+                            v -= dvisc[j]
+                            if transient:
+                                v += rho * phi[q, j] * inv_dt
+                        dr[c, k, j] = v
             if stab:
                 for i in range(n):
                     wi = tau * ugrad[i]
-                    gx = dphi_dx[e, q, i]
-                    gy = dphi_dy[e, q, i]
-                    for j in range(n):
-                        pj = phi[q, j]
-                        gxj = dphi_dx[e, q, j]
-                        gyj = dphi_dy[e, q, j]
-                        # row u_x, i: tau (u.grad phi_i) dR_0/du_d + tau R_0 d_d phi_i phi_j
-                        #             + gamma d_x phi_i d_d phi_j
-                        j00 = wi * dr00[j] + tau * R0 * gx * pj + gamma * gx * gxj
-                        j01 = wi * dr01[j] + tau * R0 * gy * pj + gamma * gx * gyj
-                        # row u_y, i
-                        j10 = wi * dr10[j] + tau * R1 * gx * pj + gamma * gy * gxj
-                        j11 = wi * dr11[j] + tau * R1 * gy * pj + gamma * gy * gyj
-                        if follow:
-                            j00 += (R0 * dtau_x * ugrad[i] + div * dgamma_x * gx) * pj
-                            j01 += (R0 * dtau_y * ugrad[i] + div * dgamma_y * gx) * pj
-                            j10 += (R1 * dtau_x * ugrad[i] + div * dgamma_x * gy) * pj
-                            j11 += (R1 * dtau_y * ugrad[i] + div * dgamma_y * gy) * pj
-                        JS_e[e, i, j] += w * j00
-                        JS_e[e, i, n + j] += w * j01
-                        JS_e[e, n + i, j] += w * j10
-                        JS_e[e, n + i, n + j] += w * j11
-                    for k in range(nc):
-                        JS_e[e, i, 2 * n + k] += w * wi * dpsi_dx[e, q, k]
-                        JS_e[e, n + i, 2 * n + k] += w * wi * dpsi_dy[e, q, k]
+                    for c in range(d):
+                        gci = dphi[c, e, q, i]
+                        row = c * n + i
+                        for k in range(d):
+                            gki = dphi[k, e, q, i]
+                            for j in range(n):
+                                pj = phi[q, j]
+                                val = (wi * dr[c, k, j] + tau * R[c] * gki * pj
+                                       + gamma * gci * dphi[k, e, q, j])
+                                if follow:
+                                    val += (R[c] * dtau[k] * ugrad[i]
+                                            + div * dgamma[k] * gci) * pj
+                                JS_e[e, row, k * n + j] += w * val
+                        for m in range(nc):
+                            JS_e[e, row, d * n + m] += w * wi * dpsi[c, e, q, m]
             if pspg:
-                for k in range(nc):
-                    px = dpsi_dx[e, q, k]
-                    py = dpsi_dy[e, q, k]
-                    gradR = px * R0 + py * R1
-                    for j in range(n):
-                        pj = phi[q, j]
-                        jx = tau * (px * dr00[j] + py * dr10[j])
-                        jy = tau * (px * dr01[j] + py * dr11[j])
-                        if follow:
-                            jx += dtau_x * gradR * pj
-                            jy += dtau_y * gradR * pj
-                        JS_e[e, 2 * n + k, j] += w * jx
-                        JS_e[e, 2 * n + k, n + j] += w * jy
-                    for m in range(nc):
-                        JS_e[e, 2 * n + k, 2 * n + m] += w * tau * (
-                            px * dpsi_dx[e, q, m] + py * dpsi_dy[e, q, m])
+                for m in range(nc):
+                    row = d * n + m
+                    for k in range(d):
+                        for j in range(n):
+                            s = 0.0
+                            for c in range(d):
+                                s += dpsi[c, e, q, m] * dr[c, k, j]
+                            val = tau * s
+                            if follow:
+                                val += dtau[k] * gradR[m] * phi[q, j]
+                            JS_e[e, row, k * n + j] += w * val
+                    for mm in range(nc):
+                        s = 0.0
+                        for c in range(d):
+                            s += dpsi[c, e, q, m] * dpsi[c, e, q, mm]
+                        JS_e[e, row, d * n + mm] += w * tau * s
 
 
-def momentum_local(b, U, par, old, mu_q, dmu_dx, dmu_dy, body, options):
+def _stacked(b):
+    """Gradient arrays stacked over the directions, cached on the block."""
+    cache = b.__dict__.get("_numba_stacked")
+    if cache is None:
+        cache = (np.ascontiguousarray(np.stack(b.dphi)), np.ascontiguousarray(np.stack(b.dpsi)),
+                 np.ascontiguousarray(b.Gmat))
+        b.__dict__["_numba_stacked"] = cache
+    return cache
+
+
+def momentum_local(b, U, par, old, mu_q, dmu, body, options):
     """numba version of :func:`aa540fem.backends.numpy_kernels.momentum_local`."""
-    n, L = b.n, b.L
+    d, n, L = b.dim, b.n, b.L
     ne = b.conn.shape[0]
-    ux, uy, pd = b.ldof[:, :n], b.ldof[:, n:2 * n], b.ldof[:, 2 * n:]
+    udof = b.ldof[:, :d * n].reshape(ne, d, n).transpose(1, 0, 2)          # (d, ne, n)
+    pd = b.ldof[:, d * n:]
     stab, pspg, jac = options["stab"], options["pspg"], options["jacobian"]
     stabilised = stab or pspg
-    ue = np.ascontiguousarray(U[ux])
-    ve = np.ascontiguousarray(U[uy])
+    ue = np.ascontiguousarray(U[udof])
     pe = np.ascontiguousarray(U[pd])
-    upe = ue if par is U else np.ascontiguousarray(par[ux])
-    vpe = ve if par is U else np.ascontiguousarray(par[uy])
+    upe = ue if par is U else np.ascontiguousarray(par[udof])
     transient = old is not None
-    uoe = np.ascontiguousarray(old[ux]) if transient else ue
-    voe = np.ascontiguousarray(old[uy]) if transient else ve
+    uoe = np.ascontiguousarray(old[udof]) if transient else ue
+    dmu_s = np.ascontiguousarray(np.stack([np.asarray(g, dtype=float) for g in dmu]))
     if body is not None:
-        fx = np.ascontiguousarray(body[0], dtype=float)
-        fy = np.ascontiguousarray(body[1], dtype=float)
+        f = np.ascontiguousarray(np.stack([np.asarray(c, dtype=float) for c in body]))
     else:
-        fx = fy = mu_q
+        f = dmu_s
     flags = np.array([stab, pspg, options["grad_div"], options["metric"], options["follow"],
                       transient, body is not None, jac], dtype=np.int64)
-    N_e = np.zeros((ne, 2 * n))
+    N_e = np.zeros((ne, d * n))
     S_e = np.zeros((ne, L)) if stabilised else np.zeros((1, L))
-    JN_e = np.zeros((ne, 2 * n, 2 * n)) if jac else np.zeros((1, 2 * n, 2 * n))
+    JN_e = np.zeros((ne, d * n, d * n)) if jac else np.zeros((1, d * n, d * n))
     JS_e = np.zeros((ne, L, L)) if (jac and stabilised) else np.zeros((1, L, L))
-    gxx, gxy, gyy = b.G
-    momentum_kernel(b.phi, b.dphi_dx, b.dphi_dy, b.lap_phi, b.psi, b.dpsi_dx, b.dpsi_dy, b.wh,
-                    gxx, gxy, gyy, ue, ve, pe, uoe, voe, upe, vpe,
-                    np.ascontiguousarray(mu_q), np.ascontiguousarray(dmu_dx),
-                    np.ascontiguousarray(dmu_dy), fx, fy, float(options["rho"]),
+    dphi, dpsi, G = _stacked(b)
+    momentum_kernel(b.phi, dphi, b.lap_phi, b.psi, dpsi, b.wh, G, ue, pe, uoe, upe,
+                    np.ascontiguousarray(mu_q), dmu_s, f, float(options["rho"]),
                     float(options["inv_dt"]), float(options["inv_dt2"]), flags,
                     N_e, S_e, JN_e, JS_e)
     if not stabilised:
@@ -341,24 +358,27 @@ def momentum_local(b, U, par, old, mu_q, dmu_dx, dmu_dy, body, options):
 
 
 def warmup(threads: int | None = None):
-    """Compile the kernels on a two-element mesh (a few seconds once per machine)."""
+    """Compile the kernels on small meshes (a few seconds once per machine)."""
     import numba
 
-    from aa540fem.core.mesh import geometry
+    from aa540fem.core.mesh import box, geometry
     from aa540fem.incompressible.assembler import FlowAssembler
     from aa540fem.incompressible.problem import FlowProblem
 
     if threads:
         numba.set_num_threads(threads)
-    for elem in ("quad9", "triangle6"):
-        mesh = geometry(1.0, 1.0, 1, elem)
+    meshes = [geometry(1.0, 1.0, 1, e) for e in ("quad9", "triangle6")]
+    meshes += [box(1.0, 1.0, 1.0, 1, e) for e in ("hexahedron27", "tetra10")]
+    for mesh in meshes:
+        d = mesh.dim
+        zero = lambda *c: tuple(0.0 * c[0] for _ in range(d))   # noqa: E731
         for stabilisation, pspg in ((False, False), (True, False), (True, True)):
             prob = FlowProblem(mesh, mu=0.1, rho=1.0, stabilisation=stabilisation, pspg=pspg,
-                               bc={"left": (1.0, 0.0)}, eddy_viscosity=np.full(mesh.n_nodes, 0.01),
-                               body_force=lambda x, y: (0.0 * x, 0.0 * y))
+                               bc={"left": (1.0,) + (0.0,) * (d - 1)},
+                               eddy_viscosity=np.full(mesh.n_nodes, 0.01), body_force=zero)
             asm = FlowAssembler(prob, backend="numba")
             U = np.linspace(0.0, 1.0, asm.space.ndof)
             asm.momentum_terms(U)
             asm.momentum_terms(U, dt=0.1, U_old=0.5 * U, param_state=U, jacobian=False)
-    prob.element_length = "streamline"
-    FlowAssembler(prob, backend="numba").momentum_terms(U)
+        prob.element_length = "streamline"
+        FlowAssembler(prob, backend="numba").momentum_terms(U)

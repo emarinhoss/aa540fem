@@ -206,6 +206,37 @@ run.final.speed
 run.save_series("out/flow")                   # .vtu per step + .pvd
 ```
 
+### Three dimensions
+
+The same solver runs in 3-D on 27-node hexahedra (Q2/Q1) and 10-node
+tetrahedra (P2/P1); every routine takes the dimension from the mesh, so a
+`FlowProblem` on a 3-D mesh has three velocity components in its boundary
+conditions, callables receive `(x, y, z[, t])`, forces come back as
+`(Fx, Fy, Fz)` and `wall_traction` integrates over the boundary faces.
+
+```python
+from aa540fem.core.mesh import box                      # structured [0,a]x[0,b]x[0,c]
+mesh = box(2.0, 1.0, 1.0, (4, 3, 2), "hexahedron27")   # or "tetra10" (6 per cell)
+mesh = read_mesh("examples/meshes/box_tet10.msh")       # Gmsh: physical surfaces are the tags
+inflow = lambda x, y, z: 4 * y * (1 - y)
+prob = FlowProblem(mesh, mu=0.05, stabilisation=True,
+                   bc={"left": (inflow, 0.0, 0.0), "bottom": (0.0, 0.0, 0.0),
+                       "top": (0.0, 0.0, 0.0), "front": (None, None, 0.0),
+                       "back": (None, None, 0.0), "right": "open"})
+sol = solve_flow(prob)
+sol.forces("bottom")                                    # (Fx, Fy, Fz)
+```
+
+`examples/channel3d.py` runs this extruded Poiseuille flow (Re 20, either
+mesh); the computed velocity, pressure and wall force match the exact
+solution to 1e-14, and the tests (`tests/test_flow3d.py`,
+`tests/test_elements3d.py`) check the same on both element types with and
+without stabilisation, the stabilised Jacobian against finite differences,
+the theta and RK45 integrators, the fieldsplit solver and the MPI
+domain decomposition in 3-D.  Tetrahedra use a conical-product Gauss-Jacobi
+rule (27 points for the P2/P1 pair); the boundary layer meshes and the
+turbulence model are still 2-D.
+
 ### High Reynolds numbers: stabilisation and continuation
 
 ```python
@@ -336,10 +367,10 @@ or `petsc-cuda`) routes are.
 
 | Module | Contents | MATLAB origin |
 |--------|----------|---------------|
-| `core/elements.py` | `ReferenceElement` registry: nodes, faces, quadrature, Taylor-Hood pairs | (new) |
-| `core/shape_functions.py` | Lagrange shape functions in Gmsh node ordering | `interpfunc_*.m` |
-| `core/quadrature.py` | Gauss-Legendre and triangle rules | `gauss_legendre_quad.m`, `gauss_trgl.m` |
-| `core/mesh.py` | `Mesh` data structure, structured rectangle `geometry()` | `geometry.m` |
+| `core/elements.py` | `ReferenceElement` registry (2-D and 3-D): nodes, faces, edges, quadrature, Taylor-Hood pairs | (new) |
+| `core/shape_functions.py` | Lagrange shape functions in meshio/VTK node ordering (triangles, quads, tetrahedra, hexahedra) | `interpfunc_*.m` |
+| `core/quadrature.py` | Gauss-Legendre, triangle, hexahedral and tetrahedral (conical product) rules | `gauss_legendre_quad.m`, `gauss_trgl.m` |
+| `core/mesh.py` | `Mesh` data structure (2-D / 3-D), structured `geometry()` and `box()` | `geometry.m` |
 | `core/util.py` | argument matching (`t`, `T`) for user callables | (new) |
 | `io/mesh_files.py`, `io/series.py` | meshio import/export, VTK and `.pvd` output | (new) |
 | `linalg/dirichlet.py` | symmetric elimination of prescribed values | `dirichlet.m` |
@@ -486,11 +517,13 @@ coefficients with Newton's method, and incompressible Navier-Stokes with
 Taylor-Hood elements including body forces on a boundary (drag and lift).
 Also done: SUPG/grad-div stabilisation, pseudo-transient continuation,
 boundary-layer meshes and wall-shear output, validated on the Blasius plate
-and the shedding cylinder; and the Spalart-Allmaras RANS model
-(`docs/turbulence.md`).  What the flow solver still lacks for aerodynamic
-work, roughly in order of usefulness: an iterative saddle-point solver
-(block preconditioning) to go beyond ~10^5 unknowns, a turbulence model,
-and finally compressibility, where a finite-volume or discontinuous
-Galerkin discretisation replaces continuous Galerkin.  Aircraft-scale RANS
+and the shedding cylinder; the Spalart-Allmaras RANS model
+(`docs/turbulence.md`); threaded assembly, MUMPS, the fieldsplit/LSC
+Krylov solver and MPI domain decomposition (`docs/parallel.md`); and the
+3-D discretisation (hexahedra and tetrahedra, verified on extruded exact
+flows).  What remains for aerodynamic work: 3-D validation cases with
+reference data (Schaefer-Turek 3D-1Z, the 3-D cavity), the turbulence
+model in 3-D, and finally compressibility, where a finite-volume or
+discontinuous Galerkin discretisation replaces continuous Galerkin.  Aircraft-scale RANS
 cases are better run in an established solver such as SU2; this code is
 the place to understand what such a solver does.

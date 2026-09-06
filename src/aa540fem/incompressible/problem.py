@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from aa540fem.core.elements import PRESSURE_ELEMENT
 from aa540fem.core.mesh import Mesh
-from aa540fem.core.util import accepts_time, call_coeff
+from aa540fem.core.util import accepts_time, call_coeff_nd
 
 OPEN = "open"
 SCHEMES = ("rk45", "theta")
@@ -87,8 +87,9 @@ class FlowProblem:
         for tag, spec in self.bc.items():
             if spec == OPEN:
                 continue
-            if not (isinstance(spec, (tuple, list)) and len(spec) == 2):
-                raise ValueError(f"bc[{tag!r}] must be (ux, uy) or 'open'")
+            if not (isinstance(spec, (tuple, list)) and len(spec) == self.mesh.dim):
+                raise ValueError(f"bc[{tag!r}] must have {self.mesh.dim} velocity components "
+                                 "or be 'open'")
 
     @property
     def has_open_boundary(self) -> bool:
@@ -100,11 +101,12 @@ class FlowProblem:
         return (not self.has_open_boundary) if self.pin_pressure is None else self.pin_pressure
 
     def depends_on_time(self) -> bool:
-        if accepts_time(self.body_force):
+        d = self.mesh.dim
+        if accepts_time(self.body_force, d):
             return True
-        return any(accepts_time(v) for spec in self.bc.values() if spec != OPEN for v in spec)
+        return any(accepts_time(v, d) for spec in self.bc.values() if spec != OPEN for v in spec)
 
 
-def values_at_pair(fn, x, y, t=0.0):
-    """Evaluate a ``(x, y[, t]) -> (a, b)`` callable."""
-    return call_coeff(fn, x, y, t)
+def values_at_pair(fn, coords, t=0.0):
+    """Evaluate a ``(x, y[, z][, t]) -> (a, b[, c])`` callable at the coordinate tuple."""
+    return call_coeff_nd(fn, coords, t)

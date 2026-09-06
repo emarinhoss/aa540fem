@@ -121,6 +121,8 @@ class SpalartAllmarasSolver:
         self.element_length = element_length      # SUPG cell measure, as in FlowProblem
         self.backend = assembly_backend(backend)
         self.N = mesh.n_nodes
+        if mesh.dim != 2:
+            raise NotImplementedError("the Spalart-Allmaras solver is two-dimensional")
         self.blocks = [_Block(mesh, name, conn, order) for name, conn in mesh.cells.items()]
         self.distance = mesh.wall_distance(wall_tags)
         self.pattern = SparsityPattern.from_element_dofs(self.N, [b.conn for b in self.blocks])

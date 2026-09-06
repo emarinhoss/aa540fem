@@ -21,9 +21,11 @@ def _initial_state(asm, U0, fixed, vals):
     if U0 is None:
         U = np.zeros(space.ndof)
     elif callable(U0):
-        ux, uy = values_at_pair(U0, mesh.x, mesh.y)
-        U = np.concatenate([np.broadcast_to(ux, mesh.x.shape), np.broadcast_to(uy, mesh.x.shape),
-                            np.zeros(space.Np)]).astype(float)
+        comps = values_at_pair(U0, mesh.coords)
+        if len(comps) != space.dim:
+            raise ValueError(f"U0 must return {space.dim} velocity components")
+        U = np.concatenate([np.broadcast_to(c, mesh.x.shape) for c in comps]
+                           + [np.zeros(space.Np)]).astype(float)
     else:
         U = np.array(U0, dtype=float, copy=True)
     U[fixed] = vals
@@ -91,7 +93,7 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
 
     F_old = asm.body_load(0.0)
     S_old = asm.K @ U + asm.convection(U, jacobian=False) - F_old
-    S_old[2 * space.N:] = 0.0
+    S_old[space.n_vel:] = 0.0
 
     times = [0.0]
     snapshots = [U.copy()]
@@ -113,7 +115,7 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
         def evaluate(Un, jacobian, U_old=U_old, F_new=F_new, S_old=S_old, th=th, t=t):
             mt = asm.momentum_terms(Un, t=t, dt=dt, U_old=U_old, jacobian=jacobian)
             S = asm.K @ Un + mt.N - F_new
-            S[2 * space.N:] = 0.0
+            S[space.n_vel:] = 0.0
             R = (M @ ((Un - U_old) / dt) + th * S + (1 - th) * S_old - BT @ Un + B @ Un
                  + mt.S)
             if not jacobian:
@@ -143,7 +145,7 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
         factorisations += res.factorisations
         U = res.T
         S_old = asm.K @ U + asm.convection(U, jacobian=False) - F_new
-        S_old[2 * space.N:] = 0.0
+        S_old[space.n_vel:] = 0.0
         F_old = F_new
         newton_iterations.append(res.iterations)
         if n % store_every == 0 or n == nsteps:
@@ -152,8 +154,8 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
         if callback is not None:
             callback(n, t, FlowSolution(problem, space, U, {"step": n, "t": t}, asm))
         if verbose and (n % max(1, nsteps // 10) == 0 or n == nsteps):
-            u, v, _ = space.split(U)
-            print(f"  step {n}/{nsteps}, t = {t:.6g}, max |u| = {np.hypot(u, v).max():.6g}, "
+            speed = np.linalg.norm(space.velocity(U), axis=0)
+            print(f"  step {n}/{nsteps}, t = {t:.6g}, max |u| = {speed.max():.6g}, "
                   f"{res.iterations} Newton iterations")
 
     info = {"scheme": "theta", "steps": nsteps, "dt": dt, "theta": theta,
@@ -181,14 +183,14 @@ def _solve_flow_transient_rk45(problem, dt, t_end, U0, store_every, verbose, cal
     """
     asm = FlowAssembler(problem)
     space = asm.space
-    N = space.N
+    nv = space.n_vel
     P = asm.pattern.matrix(asm.M_data - asm.BT_data + asm.B_data)   # [[M, -B^T], [B, 0]]
     time_dependent = problem.depends_on_time()
     if rtol == 1e-8 and atol == 1e-10:          # theta-scheme Newton defaults: use RK defaults
         rtol, atol = 1e-4, 1e-6
 
     fixed, vals0 = asm.dirichlet(0.0)
-    is_pressure = fixed >= 2 * N
+    is_pressure = fixed >= nv
     fixed_vel = fixed[~is_pressure]
     elim = eliminate(P, fixed)
     lu = factorise(elim.K_bc)
@@ -205,18 +207,18 @@ def _solve_flow_transient_rk45(problem, dt, t_end, U0, store_every, verbose, cal
         """Solve the saddle-point system for ``(k, p)`` given the momentum rhs."""
         vals, rate = fixed_values(t)
         b = np.zeros(space.ndof)
-        b[:2 * N] = b_vel[:2 * N]
+        b[:nv] = b_vel[:nv]
         given = np.where(is_pressure, vals, rate)
         b = elim.apply_rhs(b, given)
         sol = lu.solve(b)
-        return sol[:2 * N], sol[2 * N:]
+        return sol[:nv], sol[nv:]
 
     # initial velocity, projected onto the divergence-free space
     U = _initial_state(asm, U0, fixed, vals0)
     b = np.zeros(space.ndof)
-    b[:2 * N] = (asm.M @ U)[:2 * N]
+    b[:nv] = (asm.M @ U)[:nv]
     sol = lu.solve(elim.apply_rhs(b, vals0))
-    u = sol[:2 * N]
+    u = sol[:nv]
     F_const = asm.body_load(0.0)
     last = {"p": np.zeros(space.Np)}
 
@@ -248,14 +250,14 @@ def _solve_flow_transient_rk45(problem, dt, t_end, U0, store_every, verbose, cal
     if verbose:
         print(f"Taylor-Hood: {space.ndof} unknowns; RK45 (Dormand-Prince), initial dt = {dt}, "
               f"rtol = {rtol}, atol = {atol}")
-    free_vel = np.ones(2 * N, dtype=bool)
+    free_vel = np.ones(nv, dtype=bool)
     free_vel[fixed_vel] = False
     res = rk45(rhs, u, 0.0, t_end, dt, rtol=rtol, atol=atol, dt_max=dt_max, adaptive=adaptive,
                output_interval=output_interval, store_every=store_every, error_mask=free_vel,
                on_accept=on_accept, store_transform=store_transform, verbose=verbose)
     # the stored initial state has no pressure yet: recover it from the first stage
-    rhs(0.0, res.states[0][:2 * N])
-    res.states[0][2 * N:] = last["p"]
+    rhs(0.0, res.states[0][:nv])
+    res.states[0][nv:] = last["p"]
     if verbose:
         print(f"  {res.info['steps']} steps ({res.info['rejected']} rejected), "
               f"dt in [{res.info['dt_min_used']:.3e}, {res.info['dt_max_used']:.3e}]")

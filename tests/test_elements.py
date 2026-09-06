@@ -6,6 +6,8 @@ import pytest
 from aa540fem import ELEMENTS, get_element
 from aa540fem.core.elements import QUAD, QUAD9, TRIANGLE, TRIANGLE6
 
+ELEMENTS_2D = {n: e for n, e in ELEMENTS.items() if e.dim == 2}
+
 # Natural coordinates of the nodes in Gmsh ordering
 NODE_COORDS = {
     "triangle": [(0, 0), (1, 0), (0, 1)],
@@ -16,7 +18,7 @@ NODE_COORDS = {
 
 
 def test_registry_and_aliases():
-    assert set(ELEMENTS) == set(NODE_COORDS)
+    assert set(ELEMENTS_2D) == set(NODE_COORDS)
     assert get_element(1) is TRIANGLE
     assert get_element(2) is QUAD
     assert get_element(3) is QUAD9
@@ -25,10 +27,10 @@ def test_registry_and_aliases():
     with pytest.raises(ValueError):
         get_element(4)
     with pytest.raises(ValueError):
-        get_element("hexahedron")
+        get_element("prism")
 
 
-@pytest.mark.parametrize("name", sorted(ELEMENTS))
+@pytest.mark.parametrize("name", sorted(ELEMENTS_2D))
 def test_nodal_and_partition_of_unity(name):
     el = get_element(name)
     xi, eta = np.array(NODE_COORDS[name], dtype=float).T
@@ -43,7 +45,7 @@ def test_nodal_and_partition_of_unity(name):
     assert np.isclose(w.sum(), 0.5 if el.family == "triangle" else 4.0)
 
 
-@pytest.mark.parametrize("name", sorted(ELEMENTS))
+@pytest.mark.parametrize("name", sorted(ELEMENTS_2D))
 def test_derivatives_match_finite_differences(name):
     el = get_element(name)
     rng = np.random.default_rng(1)
@@ -57,7 +59,7 @@ def test_derivatives_match_finite_differences(name):
         assert np.allclose(deta, fd_eta, atol=1e-6)
 
 
-@pytest.mark.parametrize("name", sorted(ELEMENTS))
+@pytest.mark.parametrize("name", sorted(ELEMENTS_2D))
 def test_faces_walk_the_boundary_counter_clockwise(name):
     el = get_element(name)
     coords = np.array(NODE_COORDS[name], dtype=float)
@@ -74,7 +76,7 @@ def test_faces_walk_the_boundary_counter_clockwise(name):
         assert f[1] == g[0]
 
 
-@pytest.mark.parametrize("name", sorted(ELEMENTS))
+@pytest.mark.parametrize("name", sorted(ELEMENTS_2D))
 def test_reverse_flips_orientation(name):
     el = get_element(name)
     coords = np.array(NODE_COORDS[name], dtype=float)
@@ -93,7 +95,7 @@ def test_reverse_flips_orientation(name):
     assert np.allclose(phi[:, r], np.eye(el.n_nodes))
 
 
-@pytest.mark.parametrize("name", sorted(ELEMENTS))
+@pytest.mark.parametrize("name", sorted(ELEMENTS_2D))
 def test_hessians_match_finite_differences(name):
     el = get_element(name)
     rng = np.random.default_rng(3)

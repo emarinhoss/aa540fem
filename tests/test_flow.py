@@ -147,7 +147,7 @@ def test_series_output_and_validation(tmp_path):
         FlowProblem(geometry(1.0, 1.0, 2, "quad"), bc={}).validate()
     with pytest.raises(ValueError, match="Unknown boundary"):
         FlowProblem(geometry(1.0, 1.0, 2, "quad9"), bc={"lid": (1.0, 0.0)}).validate()
-    with pytest.raises(ValueError, match="ux, uy"):
+    with pytest.raises(ValueError, match="velocity components"):
         FlowProblem(geometry(1.0, 1.0, 2, "quad9"), bc={"top": 1.0}).validate()
     with pytest.raises(ValueError):
         solve_flow_transient(p, scheme="theta", dt=0.3, t_end=1.0)

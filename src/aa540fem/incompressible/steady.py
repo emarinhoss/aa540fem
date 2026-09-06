@@ -47,14 +47,14 @@ def project_divergence_free(asm: FlowAssembler, U, fixed, vals):
     (quadratic in ``u`` and ``p``) turn into a residual that does not shrink
     with the step, so every step is rejected.
     """
-    N = asm.space.N
+    nv = asm.space.n_vel
     P = asm.pattern.matrix(asm.M_data - asm.BT_data + asm.B_data)   # [[M, -B^T], [B, 0]]
     elim = eliminate(P, fixed)
     b = np.zeros(asm.space.ndof)
-    b[:2 * N] = (asm.M @ U)[:2 * N]
+    b[:nv] = (asm.M @ U)[:nv]
     sol, _ = LinearSolver(elim.K_bc, "direct", symmetric=False).solve(elim.apply_rhs(b, vals))
     V = np.array(U, dtype=float, copy=True)
-    V[:2 * N] = sol[:2 * N]
+    V[:nv] = sol[:nv]
     V[fixed] = vals
     return V
 
@@ -125,7 +125,7 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
         U = project_divergence_free(asm, U, fixed, vals)
         M = asm.M
         if local_timestep:
-            vel = fixed < 2 * asm.space.N
+            vel = fixed < asm.space.n_vel
             u_ref = max(float(np.abs(vals[vel]).max()) if vel.any() else 0.0, 1e-3)
             scale = local_pseudo_time_scaling(asm.mesh, problem.mu / problem.rho, u_ref)
             inv = np.concatenate([1.0 / scale, 1.0 / scale, np.ones(asm.space.Np)])
@@ -190,7 +190,7 @@ def fieldsplit_factory(asm, rtol=1e-6, velocity_pc="ilu", gpu=None, schur="lsc",
         except ImportError:
             gpu = False
     Mp = pressure_mass_matrix(asm)
-    n_vel = 2 * asm.space.N
+    n_vel = asm.space.n_vel
     Qdiag = np.asarray(abs(asm.M).sum(axis=1)).ravel()[:n_vel]     # lumped velocity mass
 
     class _Adapter:

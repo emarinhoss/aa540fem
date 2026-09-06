@@ -53,10 +53,16 @@ Physics modules never import a backend or a solver library directly; they go
 through `aa540fem.backends` (assembly) and `aa540fem.linalg.direct.factorise`
 (factorisation), whose defaults come from `aa540fem.hardware.get_config()`.
 
-**Dof layout.** `TaylorHoodSpace` numbers the unknowns `[u_x (N), u_y (N),
-p (Np corner nodes)]`; element-local arrays use the same order
-`[u_x nodes, u_y nodes, p corners]` (L = 22 for quad9, 15 for triangle6), and
-`_Block` holds the precomputed quadrature data of one cell type.
+**Dimension and dof layout.** The mesh sets the dimension (`Mesh.dim`, points
+`(n, d)`); elements are `triangle6`/`quad9` in 2D and `tetra10`/`hexahedron27`
+in 3D (meshio/VTK node ordering, registered in `core/elements.py` with faces,
+edges and the linear pressure element). `TaylorHoodSpace` numbers the unknowns
+`[u_1 (N), ..., u_d (N), p (Np corner nodes)]` (`space.n_vel = d N`);
+element-local arrays use the same order (L = d n + nc), and `_Block` holds the
+quadrature data of one cell type with `dphi`/`dpsi` as tuples of `d` gradient
+arrays and `Gmat` the `d x d` metric. User callables take `(x, y[, z][, t])`
+(`core/util.call_coeff_nd`); boundary specs have `d` components. Still 2D only:
+`transport/` (the heat code), `core/wall_distance.py`, `turbulence/`.
 
 **Fixed sparsity pattern.** `FlowAssembler` builds one `SparsityPattern`
 (`backends/pattern.py`) per space; every matrix (K, M, B, B^T, the Jacobian
@@ -113,7 +119,8 @@ the whole mesh. Under `mpirun`, code that only rank 0 runs must not call
 `make_meshes.py` from the `.geo` files (`cylinder.geo` sizes come only from its
 background field; `make(..., size_factor=)` scales them). Tests and benchmarks
 read `cylinder_bl.msh` and `flat_plate_bl.msh`; the `_bl` meshes mix quad9
-boundary-layer cells with triangle6.
+boundary-layer cells with triangle6. `box_tet10.msh` is the small 3D
+tetrahedral mesh; `core.mesh.box()` builds structured 3D meshes without gmsh.
 
 ## Conventions that matter here
 

@@ -114,9 +114,9 @@ def test_distributed_assembly_matches_serial():
     sub_asm = FlowAssembler(sub_prob)
     values, dofs = [], []
     for b in sub_asm.blocks:
-        mu_q, dmu_dx, dmu_dy = sub_asm.viscosity(b)
-        K_e, M_e, Bx_e, By_e, BT_e = linear_local(b, mu_q, dmu_dx, dmu_dy, prob.rho, False)
-        values.append(K_e + M_e + Bx_e + By_e - BT_e)
+        mu_q, dmu = sub_asm.viscosity(b)
+        K_e, M_e, B_e, BT_e = linear_local(b, mu_q, dmu, prob.rho, False)
+        values.append(K_e + M_e + sum(B_e) - BT_e)
         gnodes = nodes[b.conn]                                    # local -> global nodes
         dofs.append(serial.space.local_dofs(gnodes, gnodes[:, :b.nc]))
     values = np.concatenate(values) if values else np.zeros((0, 1, 1))
@@ -195,3 +195,22 @@ def test_distributed_state_round_trip():
     free = np.ones(U.size, dtype=bool)
     free[fixed] = False
     assert np.allclose(back[free], U[free])
+
+
+def test_distributed_newton_in_3d_matches_serial():
+    _petsc_or_skip()
+    from aa540fem.core.mesh import box
+    from aa540fem.incompressible import solve_flow
+    from aa540fem.parallel.flow import DistributedFlowSystem
+
+    mesh = box(2.0, 1.0, 1.0, (3, 2, 2), "tetra10")
+    inflow = lambda x, y, z: 4.0 * y * (1.0 - y)
+    prob = FlowProblem(mesh, mu=0.05, rho=1.0, stabilisation=True,
+                       bc={"left": (inflow, 0.0, 0.0), "bottom": (0.0, 0.0, 0.0),
+                           "top": (0.0, 0.0, 0.0), "front": (None, None, 0.0),
+                           "back": (None, None, 0.0), "right": "open"})
+    ref = solve_flow(prob)
+    sol = DistributedFlowSystem(prob).solve_steady()
+    assert sol.info["converged"]
+    assert np.abs(sol.U - ref.U).max() < 1e-8 * np.abs(ref.U).max()
+    assert np.abs(sol.u - 4.0 * mesh.y * (1.0 - mesh.y)).max() < 1e-8

@@ -35,7 +35,7 @@ def exact_layer(x, y, eps=EPS):
 
 
 # ------------------------------------------------------------------ operators
-@pytest.mark.parametrize("name", sorted(ELEMENTS))
+@pytest.mark.parametrize("name", sorted(n for n, e in ELEMENTS.items() if e.dim == 2))
 def test_mass_matrix_integrates_capacity(name):
     mesh = geometry(2.0, 3.0, 4, name)
     ops = assemble_operators(mesh, Problem(mesh=mesh, rho_c=2.5))
@@ -44,7 +44,7 @@ def test_mass_matrix_integrates_capacity(name):
     assert ops.C.nnz == 0
 
 
-@pytest.mark.parametrize("name", sorted(ELEMENTS))
+@pytest.mark.parametrize("name", sorted(n for n, e in ELEMENTS.items() if e.dim == 2))
 @pytest.mark.parametrize("supg", [False, True])
 def test_convection_rows_sum_to_zero(name, supg):
     # u . grad(sum_j phi_j) = 0, with or without the streamline weighting
@@ -55,7 +55,7 @@ def test_convection_rows_sum_to_zero(name, supg):
     assert ops.C.nnz > 0
 
 
-@pytest.mark.parametrize("name", sorted(ELEMENTS))
+@pytest.mark.parametrize("name", sorted(n for n, e in ELEMENTS.items() if e.dim == 2))
 def test_elem_operators_reproduces_elem_eqn(name):
     mesh = geometry(2.0, 3.0, 3, name)
     el = get_element(name)

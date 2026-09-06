@@ -121,6 +121,73 @@ def element_metric(inverse, family):
     return gxx, gxy, gyy
 
 
+# -- d-dimensional mappings (the 2-D functions above are the d = 2 special case;
+#    the arithmetic is the same, so 2-D results are unchanged) -------------
+def jacobian_nd(coords, dphi_nat):
+    """Isoparametric map in ``d`` dimensions.
+
+    ``coords``: ``d`` arrays ``(n_elems, n)`` of nodal coordinates;
+    ``dphi_nat``: ``d`` arrays ``(nq, n)`` of natural derivatives.  Returns
+    ``(hs, inverse)`` with ``hs`` the Jacobian determinant ``(n_elems, nq)``
+    and ``inverse[i][j] = d xi_i / d x_j`` (``d x d`` nested tuple of
+    ``(n_elems, nq)`` arrays).
+    """
+    d = len(coords)
+    J = [[np.asarray(coords[i]) @ np.asarray(dphi_nat[j]).T for j in range(d)] for i in range(d)]
+    if d == 2:
+        (a, b), (c, e) = J                              # dx/dxi dx/deta ; dy/dxi dy/deta
+        hs = a * e - b * c
+        inv = ((e / hs, -b / hs), (-c / hs, a / hs))    # dxi/dx dxi/dy ; deta/dx deta/dy
+        return hs, inv
+    if d == 3:
+        (a, b, c), (e, f, g), (h, i, j) = J
+        A = f * j - g * i
+        B = -(e * j - g * h)
+        C = e * i - f * h
+        hs = a * A + b * B + c * C
+        inv = ((A / hs, -(b * j - c * i) / hs, (b * g - c * f) / hs),
+               (B / hs, (a * j - c * h) / hs, -(a * g - c * e) / hs),
+               (C / hs, -(a * i - b * h) / hs, (a * f - b * e) / hs))
+        return hs, inv
+    raise ValueError("dimension must be 2 or 3")
+
+
+def map_gradients_nd(inverse, dphi_nat):
+    """Physical gradients, a tuple of ``d`` arrays ``(n_elems, nq, n)``."""
+    d = len(inverse)
+    return tuple(sum(inverse[i][j][:, :, None] * np.asarray(dphi_nat[i])[None]
+                     for i in range(d)) for j in range(d))
+
+
+_HESSIAN_PAIRS = {2: ((0, 0), (0, 1), (1, 1)),
+                  3: ((0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2))}
+
+
+def physical_laplacian_nd(inverse, hessians):
+    """Laplacian of the shape functions from the natural Hessian components
+    (``(xx, xy, yy)`` or ``(xx, xy, xz, yy, yz, zz)``), neglecting the curvature
+    of the map as :func:`physical_laplacian` does."""
+    d = len(inverse)
+    out = 0.0
+    for (p, q), h in zip(_HESSIAN_PAIRS[d], hessians):
+        coef = sum(inverse[p][k] * inverse[q][k] for k in range(d))
+        out = out + (1.0 if p == q else 2.0) * coef[:, :, None] * np.asarray(h)[None]
+    return out
+
+
+def element_metric_nd(inverse, family):
+    """Metric tensor ``G = J^-T T J^-1`` as a ``(n_elems, nq, d, d)`` array
+    (see :func:`element_metric`; simplices use ``T`` of the equilateral
+    reference simplex, ``T_ii = 4``, ``T_ij = 2``)."""
+    d = len(inverse)
+    if family in ("triangle", "tetra"):
+        T = np.full((d, d), 2.0) + 2.0 * np.eye(d)
+    else:
+        T = np.eye(d)
+    Ji = np.stack([np.stack(row, axis=-1) for row in inverse], axis=-2)   # (ne, nq, d, d)
+    return np.einsum("...ki,kl,...lj->...ij", Ji, T, Ji)
+
+
 def supg_length(sx, sy, dphi_dx, dphi_dy):
     """Element length in the direction ``s = (sx, sy)`` (unit vectors, ``(n_elems, nq)``):
     ``h = 2 / sum_i |s . grad phi_i|`` (Tezduyar)."""

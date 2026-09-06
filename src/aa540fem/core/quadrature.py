@@ -136,18 +136,47 @@ def gauss_trgl(m: int = 3) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 _FAMILY = {1: "triangle", 2: "quad", 3: "quad"}
+FAMILY_DIM = {"triangle": 2, "quad": 2, "tetra": 3, "hexahedron": 3}
 
 
-def quadrature_rule(family, order: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Quadrature points ``(xi, eta)`` and weights ``w`` for a reference element.
+def gauss_tetra(degree: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Conical-product (Stroud) rule on the reference tetrahedron
+    ``{xi, eta, zeta >= 0, xi + eta + zeta <= 1}`` exact for polynomials of the
+    given total ``degree``, with ``n = ceil((degree + 1) / 2)`` points per
+    direction (``n^3`` in all) and positive weights summing to ``1/6``.
 
-    ``family`` is ``"triangle"`` or ``"quad"`` (the legacy element type
-    numbers 1, 2 and 3 are accepted too).
+    The tetrahedron is the collapsed cube ``x = a, y = b (1 - a),
+    z = c (1 - a)(1 - b)`` with ``a, b, c`` in [0, 1]; the Jacobian
+    ``(1 - a)^2 (1 - b)`` is absorbed by Gauss-Jacobi rules with weights
+    ``(1 - r)^2`` and ``(1 - s)`` on [-1, 1] (``scipy.special.roots_jacobi``).
+    """
+    from scipy.special import roots_jacobi
+
+    n = max(1, (int(degree) + 2) // 2)
+    r, wr = roots_jacobi(n, 2.0, 0.0)
+    s, ws = roots_jacobi(n, 1.0, 0.0)
+    t, wt = gauss_legendre_quad(n)
+    a, b, c = 0.5 * (1.0 + r), 0.5 * (1.0 + s), 0.5 * (1.0 + t)
+    A, B, C = np.meshgrid(a, b, c, indexing="ij")
+    W = np.einsum("i,j,k->ijk", wr, ws, wt) / 64.0
+    xi = A
+    eta = B * (1.0 - A)
+    zeta = C * (1.0 - A) * (1.0 - B)
+    return xi.ravel(), eta.ravel(), zeta.ravel(), W.ravel()
+
+
+def quadrature_rule(family, order: int):
+    """Quadrature points and weights for a reference element.
+
+    ``family`` is ``"triangle"``, ``"quad"`` (the legacy element type numbers
+    1, 2 and 3 are accepted too), ``"tetra"`` or ``"hexahedron"``; the return
+    is ``(xi, eta, w)`` in 2D and ``(xi, eta, zeta, w)`` in 3D.
 
     * triangle: ``gauss_trgl(order)`` with the weights scaled by the
       reference-triangle area (1/2) so that ``sum(w) == 1/2``.
-    * quad: tensor product of the 1-D Gauss-Legendre rule of the given order
-      on [-1, 1]^2, ``sum(w) == 4``.
+    * quad / hexahedron: tensor product of the 1-D Gauss-Legendre rule of the
+      given order on [-1, 1]^d, ``sum(w) == 2^d``.
+    * tetra: :func:`gauss_tetra` exact to the polynomial degree ``order``.
     """
     family = _FAMILY.get(family, family)
     if family == "triangle":
@@ -158,4 +187,17 @@ def quadrature_rule(family, order: int) -> tuple[np.ndarray, np.ndarray, np.ndar
         xi, eta = np.meshgrid(x1, x1, indexing="ij")
         w = np.outer(w1, w1)
         return xi.ravel(), eta.ravel(), w.ravel()
-    raise ValueError(f"Unknown element family {family!r}; expected 'triangle' or 'quad'")
+    if family == "hexahedron":
+        x1, w1 = gauss_legendre_quad(order)
+        xi, eta, zeta = np.meshgrid(x1, x1, x1, indexing="ij")
+        w = np.einsum("i,j,k->ijk", w1, w1, w1)
+        return xi.ravel(), eta.ravel(), zeta.ravel(), w.ravel()
+    if family == "tetra":
+        return gauss_tetra(order)
+    raise ValueError(f"Unknown element family {family!r}; expected one of {sorted(FAMILY_DIM)}")
+
+
+def quadrature_points(family, order: int) -> tuple[tuple, np.ndarray]:
+    """``(coords, w)`` with ``coords`` the tuple of natural-coordinate arrays."""
+    rule = quadrature_rule(family, order)
+    return tuple(rule[:-1]), rule[-1]

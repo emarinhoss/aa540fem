@@ -6,7 +6,7 @@ import pytest
 from aa540fem import DIRICHLET, ELEMENTS, Problem, element_gradient, error_norms, geometry, solve
 
 
-@pytest.mark.parametrize("name", sorted(ELEMENTS))
+@pytest.mark.parametrize("name", sorted(n for n, e in ELEMENTS.items() if e.dim == 2))
 def test_gradient_and_flux_of_linear_field(name):
     mesh = geometry(2.0, 3.0, 3, name)
     T = 2 * mesh.x - mesh.y

@@ -1,11 +1,12 @@
-"""Reference (NumPy) element kernels of the Navier-Stokes assembly.
+"""Reference (NumPy) element kernels of the Navier-Stokes assembly (2-D and 3-D).
 
 Every kernel works on one cell block (:class:`aa540fem.incompressible.space._Block`)
-and returns element-local arrays in the layout ``[u_x nodes (n), u_y nodes
-(n), p corner nodes (nc)]``, i.e. ``L = 2 n + nc`` local dofs, which the
-assembler scatters with its :class:`~aa540fem.backends.pattern.ScatterPlan`.
-The threaded numba kernels (:mod:`aa540fem.backends.numba_kernels`) produce
-the same arrays; this module is the definition they are tested against.
+of dimension ``d`` and returns element-local arrays in the layout
+``[u_1 nodes (n), ..., u_d nodes (n), p corner nodes (nc)]``, i.e.
+``L = d n + nc`` local dofs, which the assembler scatters with its
+:class:`~aa540fem.backends.pattern.ScatterPlan`.  The threaded numba kernels
+(:mod:`aa540fem.backends.numba_kernels`) produce the same arrays; this
+module is the definition they are tested against.
 """
 
 from __future__ import annotations
@@ -14,186 +15,176 @@ import numpy as np
 
 
 # -- constant matrices ------------------------------------------------
-def linear_local(b, mu_q, dmu_dx, dmu_dy, rho, variable_viscosity):
-    """Element viscous ``K``, mass ``M``, divergence ``Bx``, ``By`` and the
-    transposed divergence ``B^T`` (gradient) blocks, each ``(ne, L, L)``."""
-    n, L = b.n, b.L
+def linear_local(b, mu_q, dmu, rho, variable_viscosity):
+    """Element viscous ``K``, mass ``M``, the ``d`` divergence blocks ``B_k``
+    (``q d_k u_k``, a list) and the transposed divergence ``B^T`` (gradient)
+    block, each ``(ne, L, L)``.  ``dmu`` is the tuple of the ``d`` viscosity
+    gradient components at the quadrature points."""
+    d, n, L = b.dim, b.n, b.L
     ne = b.conn.shape[0]
     wmu = b.wh * mu_q
-    Kuu = (np.einsum("eq,eqi,eqj->eij", wmu, b.dphi_dx, b.dphi_dx)
-           + np.einsum("eq,eqi,eqj->eij", wmu, b.dphi_dy, b.dphi_dy))
+    Kuu = sum(np.einsum("eq,eqi,eqj->eij", wmu, b.dphi[k], b.dphi[k]) for k in range(d))
     Muu = rho * np.einsum("eq,qi,qj->eij", b.wh, b.phi, b.phi)
-    Bxe = np.einsum("eq,qk,eqj->ekj", b.wh, b.psi, b.dphi_dx)             # (ne, nc, n)
-    Bye = np.einsum("eq,qk,eqj->ekj", b.wh, b.psi, b.dphi_dy)
+    Bk = [np.einsum("eq,qk,eqj->ekj", b.wh, b.psi, b.dphi[k]) for k in range(d)]   # (ne, nc, n)
     K = np.zeros((ne, L, L))
     M = np.zeros((ne, L, L))
-    Bx = np.zeros((ne, L, L))
-    By = np.zeros((ne, L, L))
+    B = [np.zeros((ne, L, L)) for _ in range(d)]
     BT = np.zeros((ne, L, L))
-    for c in range(2):
+    for c in range(d):
         K[:, c * n:(c + 1) * n, c * n:(c + 1) * n] = Kuu
         M[:, c * n:(c + 1) * n, c * n:(c + 1) * n] = Muu
     if variable_viscosity:
         # variable viscosity term - grad(u)^T . grad(mu):
-        # block (c, d) = - int phi_i (d_d mu) (d_c phi_j)
-        dgrad = (b.dphi_dx, b.dphi_dy)
-        dmu = (dmu_dx, dmu_dy)
-        for c in range(2):
-            for d in range(2):
-                K[:, c * n:(c + 1) * n, d * n:(d + 1) * n] -= np.einsum(
-                    "eq,qi,eqj->eij", b.wh * dmu[d], b.phi, dgrad[c])
-    Bx[:, 2 * n:, :n] = Bxe
-    By[:, 2 * n:, n:2 * n] = Bye
-    BT[:, :n, 2 * n:] = np.transpose(Bxe, (0, 2, 1))
-    BT[:, n:2 * n, 2 * n:] = np.transpose(Bye, (0, 2, 1))
-    return K, M, Bx, By, BT
+        # block (c, k) = - int phi_i (d_k mu) (d_c phi_j)
+        for c in range(d):
+            for k in range(d):
+                K[:, c * n:(c + 1) * n, k * n:(k + 1) * n] -= np.einsum(
+                    "eq,qi,eqj->eij", b.wh * dmu[k], b.phi, b.dphi[c])
+    for k in range(d):
+        B[k][:, d * n:, k * n:(k + 1) * n] = Bk[k]
+        BT[:, k * n:(k + 1) * n, d * n:] = np.transpose(Bk[k], (0, 2, 1))
+    return K, M, B, BT
 
 
-def body_load_local(b, fx, fy, rho):
-    """Element load ``rho int phi_i f`` as ``(ne, 2n)``."""
-    return np.concatenate([rho * np.einsum("eq,qi->ei", b.wh * fx, b.phi),
-                           rho * np.einsum("eq,qi->ei", b.wh * fy, b.phi)], axis=1)
+def body_load_local(b, f, rho):
+    """Element load ``rho int phi_i f_c`` as ``(ne, d n)`` from the tuple ``f`` of
+    the ``d`` force components at the quadrature points."""
+    return np.concatenate([rho * np.einsum("eq,qi->ei", b.wh * f[c], b.phi)
+                           for c in range(b.dim)], axis=1)
 
 
 # -- nonlinear terms --------------------------------------------------
-def momentum_local(b, U, par, old, mu_q, dmu_dx, dmu_dy, body, options, backend="numpy"):
+def momentum_local(b, U, par, old, mu_q, dmu, body, options, backend="numpy"):
     """Element-local convective and stabilisation residuals and Jacobians.
 
-    Returns ``(N_e (ne, 2n), S_e (ne, L) or None, JN_e (ne, 2n, 2n) or None,
+    Returns ``(N_e (ne, d n), S_e (ne, L) or None, JN_e (ne, d n, d n) or None,
     JS_e (ne, L, L) or None)``.  ``U``/``par``/``old`` are global dof vectors
     (the state, the state the stabilisation parameters are evaluated at,
-    and the previous time level or ``None``); ``body`` is ``(fx, fy)`` at the
-    quadrature points or ``None``; ``options`` holds ``rho, stab, pspg,
-    grad_div, metric, follow, jacobian, inv_dt, inv_dt2``.
+    and the previous time level or ``None``); ``dmu`` the viscosity gradient
+    components, ``body`` the ``d`` force components at the quadrature points
+    or ``None``; ``options`` holds ``rho, stab, pspg, grad_div, metric,
+    follow, jacobian, inv_dt, inv_dt2``.
     """
     if backend == "numba":
         from aa540fem.backends.numba_kernels import momentum_local as _numba_momentum
 
-        return _numba_momentum(b, U, par, old, mu_q, dmu_dx, dmu_dy, body, options)
+        return _numba_momentum(b, U, par, old, mu_q, dmu, body, options)
     rho = options["rho"]
     stab, pspg, jac = options["stab"], options["pspg"], options["jacobian"]
-    n, L = b.n, b.L
+    d, n, L = b.dim, b.n, b.L
     ne = b.conn.shape[0]
-    ux, uy = b.ldof[:, :n], b.ldof[:, n:2 * n]
-    pd = b.ldof[:, 2 * n:]
-    ue, ve = U[ux], U[uy]
-    uq, vq = ue @ b.phi.T, ve @ b.phi.T
-    dudx = np.einsum("eqi,ei->eq", b.dphi_dx, ue)
-    dudy = np.einsum("eqi,ei->eq", b.dphi_dy, ue)
-    dvdx = np.einsum("eqi,ei->eq", b.dphi_dx, ve)
-    dvdy = np.einsum("eqi,ei->eq", b.dphi_dy, ve)
+    udof = [b.ldof[:, c * n:(c + 1) * n] for c in range(d)]
+    pd = b.ldof[:, d * n:]
+    ue = [U[udof[c]] for c in range(d)]
+    uq = [ue[c] @ b.phi.T for c in range(d)]
+    grad = [[np.einsum("eqi,ei->eq", b.dphi[k], ue[c]) for k in range(d)] for c in range(d)]
     wh = b.wh
     phi = b.phi[None]                                        # (1, q, n)
-    ugrad = uq[:, :, None] * b.dphi_dx + vq[:, :, None] * b.dphi_dy
+    dgrad = b.dphi
+    ugrad = sum(uq[k][:, :, None] * dgrad[k] for k in range(d))     # u . grad phi_j
 
     # Galerkin convection: residual and Jacobian d/du [rho (u . grad) u]
-    conv = rho * (uq * dudx + vq * dudy), rho * (uq * dvdx + vq * dvdy)
-    N_e = np.concatenate([np.einsum("eq,qi->ei", wh * conv[0], b.phi),
-                          np.einsum("eq,qi->ei", wh * conv[1], b.phi)], axis=1)
-    dconv = ((rho * (ugrad + dudx[:, :, None] * phi), rho * dudy[:, :, None] * phi),
-             (rho * dvdx[:, :, None] * phi, rho * (ugrad + dvdy[:, :, None] * phi)))
+    conv = [rho * sum(uq[k] * grad[c][k] for k in range(d)) for c in range(d)]
+    N_e = np.concatenate([np.einsum("eq,qi->ei", wh * conv[c], b.phi) for c in range(d)], axis=1)
+    dconv = [[rho * ((ugrad if c == k else 0.0) + grad[c][k][:, :, None] * phi)
+              for k in range(d)] for c in range(d)]
     JN_e = None
     if jac:
-        JN_e = np.empty((ne, 2 * n, 2 * n))
-        for c in range(2):
-            for d in range(2):
-                JN_e[:, c * n:(c + 1) * n, d * n:(d + 1) * n] = np.einsum(
-                    "eq,qi,eqj->eij", wh, b.phi, dconv[c][d])
+        JN_e = np.empty((ne, d * n, d * n))
+        for c in range(d):
+            for k in range(d):
+                JN_e[:, c * n:(c + 1) * n, k * n:(k + 1) * n] = np.einsum(
+                    "eq,qi,eqj->eij", wh, b.phi, dconv[c][k])
     if not (stab or pspg):
         return N_e, None, JN_e, (np.zeros((ne, L, L)) if jac else None)
 
     # full momentum residual at the quadrature points and its derivatives
     nu = mu_q / rho
-    lap = np.einsum("eqi,ei->eq", b.lap_phi, ue), np.einsum("eqi,ei->eq", b.lap_phi, ve)
-    grads = ((dudx, dudy), (dvdx, dvdy))
+    lap = [np.einsum("eqi,ei->eq", b.lap_phi, ue[c]) for c in range(d)]
     # - div(mu grad u) - grad(u)^T grad(mu) = - mu lap u - grad mu . grad u - grad(u)^T grad mu
-    visc = [-mu_q * lap[c] - (dmu_dx * grads[c][0] + dmu_dy * grads[c][1])
-            - (dmu_dx * grads[0][c] + dmu_dy * grads[1][c]) for c in range(2)]
+    visc = [-mu_q * lap[c] - sum(dmu[k] * grad[c][k] for k in range(d))
+            - sum(dmu[k] * grad[k][c] for k in range(d)) for c in range(d)]
     pe = U[pd]
-    gradp = np.einsum("eqk,ek->eq", b.dpsi_dx, pe), np.einsum("eqk,ek->eq", b.dpsi_dy, pe)
+    dpsi = b.dpsi
+    gradp = [np.einsum("eqk,ek->eq", dpsi[c], pe) for c in range(d)]
     R = [conv[c] + visc[c] + gradp[c] - (rho * body[c] if body is not None else 0.0)
-         for c in range(2)]
-    dgrad = (b.dphi_dx, b.dphi_dy)
-    dmu = (dmu_dx, dmu_dy)
+         for c in range(d)]
     if old is not None:
-        uo = old[ux] @ b.phi.T, old[uy] @ b.phi.T
-        R[0] = R[0] + rho * (uq - uo[0]) * options["inv_dt"]
-        R[1] = R[1] + rho * (vq - uo[1]) * options["inv_dt"]
-    dpsi = (b.dpsi_dx, b.dpsi_dy)
+        for c in range(d):
+            uo = old[udof[c]] @ b.phi.T
+            R[c] = R[c] + rho * (uq[c] - uo) * options["inv_dt"]
 
     # stabilisation parameters from the parameter state
-    upq, vpq = par[ux] @ b.phi.T, par[uy] @ b.phi.T
+    upq = [par[udof[c]] @ b.phi.T for c in range(d)]
     parameters = metric_parameters if options["metric"] else streamline_parameters
-    tau, gamma, dtau_d, dgamma_d = parameters(b, upq, vpq, nu, options["inv_dt2"],
+    tau, gamma, dtau_d, dgamma_d = parameters(b, upq, nu, options["inv_dt2"],
                                               options["grad_div"])
     follow = options["follow"]
 
     S_e = np.zeros((ne, L))
+    w_i = tau[:, :, None] * ugrad                                 # tau (u . grad phi_i)
+    div = sum(grad[c][c] for c in range(d))
     if stab:
-        w_i = tau[:, :, None] * ugrad                             # tau (u . grad phi_i)
-        div = dudx + dvdy
-        for c in range(2):
+        for c in range(d):
             S_e[:, c * n:(c + 1) * n] = (np.einsum("eq,eqi->ei", wh * R[c], w_i)
                                          + np.einsum("eq,eqi->ei", wh * gamma * div, dgrad[c]))
     gradR = None
     if pspg:
-        gradR = dpsi[0] * R[0][:, :, None] + dpsi[1] * R[1][:, :, None]
-        S_e[:, 2 * n:] = np.einsum("eq,eqk->ek", wh * tau, gradR)
+        gradR = sum(dpsi[c] * R[c][:, :, None] for c in range(d))
+        S_e[:, d * n:] = np.einsum("eq,eqk->ek", wh * tau, gradR)
     if not jac:
         return N_e, S_e, None, None
 
-    dR = [[dconv[c][d]
-           - (mu_q[:, :, None] * b.lap_phi
-              + dmu_dx[:, :, None] * b.dphi_dx + dmu_dy[:, :, None] * b.dphi_dy
-              if c == d else 0.0)
-           - dmu[d][:, :, None] * dgrad[c]          # d/du_{d,j} of -d_c u_d d_d mu
-           for d in range(2)] for c in range(2)]
+    dvisc = mu_q[:, :, None] * b.lap_phi + sum(dmu[k][:, :, None] * dgrad[k] for k in range(d))
+    dR = [[dconv[c][k] - (dvisc if c == k else 0.0)
+           - dmu[k][:, :, None] * dgrad[c]          # d/du_{k,j} of -d_c u_k d_k mu
+           for k in range(d)] for c in range(d)]
     if old is not None:
-        for c in range(2):
+        for c in range(d):
             dR[c][c] = dR[c][c] + rho * phi * options["inv_dt"]
     JS_e = np.zeros((ne, L, L))
     if stab:
-        for c in range(2):
+        for c in range(d):
             rows = slice(c * n, (c + 1) * n)
-            for d in range(2):
-                J = (np.einsum("eq,eqi,eqj->eij", wh, w_i, dR[c][d])
-                     + np.einsum("eq,eqi,qj->eij", wh * tau * R[c], dgrad[d], b.phi)
-                     + np.einsum("eq,eqi,eqj->eij", wh * gamma, dgrad[c], dgrad[d]))
+            for k in range(d):
+                J = (np.einsum("eq,eqi,eqj->eij", wh, w_i, dR[c][k])
+                     + np.einsum("eq,eqi,qj->eij", wh * tau * R[c], dgrad[k], b.phi)
+                     + np.einsum("eq,eqi,eqj->eij", wh * gamma, dgrad[c], dgrad[k]))
                 if follow:
-                    J = J + (np.einsum("eq,eqi,qj->eij", wh * R[c] * dtau_d[d], ugrad, b.phi)
-                             + np.einsum("eq,eqi,qj->eij", wh * div * dgamma_d[d],
+                    J = J + (np.einsum("eq,eqi,qj->eij", wh * R[c] * dtau_d[k], ugrad, b.phi)
+                             + np.einsum("eq,eqi,qj->eij", wh * div * dgamma_d[k],
                                          dgrad[c], b.phi))
-                JS_e[:, rows, d * n:(d + 1) * n] = J
-            JS_e[:, rows, 2 * n:] = np.einsum("eq,eqi,eqk->eik", wh, w_i, dpsi[c])
+                JS_e[:, rows, k * n:(k + 1) * n] = J
+            JS_e[:, rows, d * n:] = np.einsum("eq,eqi,eqk->eik", wh, w_i, dpsi[c])
     if pspg:
-        for d in range(2):
-            J = (np.einsum("eq,eqk,eqj->ekj", wh * tau, dpsi[0], dR[0][d])
-                 + np.einsum("eq,eqk,eqj->ekj", wh * tau, dpsi[1], dR[1][d]))
+        for k in range(d):
+            J = sum(np.einsum("eq,eqk,eqj->ekj", wh * tau, dpsi[c], dR[c][k]) for c in range(d))
             if follow:
-                J = J + np.einsum("eq,eqk,qj->ekj", wh * dtau_d[d], gradR, b.phi)
-            JS_e[:, 2 * n:, d * n:(d + 1) * n] = J
-        JS_e[:, 2 * n:, 2 * n:] = (np.einsum("eq,eqk,eql->ekl", wh * tau, dpsi[0], dpsi[0])
-                                   + np.einsum("eq,eqk,eql->ekl", wh * tau, dpsi[1], dpsi[1]))
+                J = J + np.einsum("eq,eqk,qj->ekj", wh * dtau_d[k], gradR, b.phi)
+            JS_e[:, d * n:, k * n:(k + 1) * n] = J
+        JS_e[:, d * n:, d * n:] = sum(np.einsum("eq,eqk,eql->ekl", wh * tau, dpsi[c], dpsi[c])
+                                      for c in range(d))
     return N_e, S_e, JN_e, JS_e
 
 
 # -- stabilisation parameters -----------------------------------------
-def streamline_parameters(b, upq, vpq, nu, inv_dt2, grad_div):
+def streamline_parameters(b, upq, nu, inv_dt2, grad_div):
     """Tezduyar's ``tau`` and ``gamma`` with the flow-direction element length.
 
     ``h = 2 / sum_i |s . grad phi_i|``, ``s = u / |u|``;
     ``tau = [(2/dt)^2 + (2|u|/h)^2 + (4 nu/h^2)^2]^(-1/2)``;
     ``gamma = h |u| / 2 min(1, Re_h / 3)``, ``Re_h = |u| h / (2 nu)``.
-    Returns ``tau, gamma`` and their derivatives with respect to the two
-    velocity components at the quadrature points (through ``|u|`` and through
-    ``h(s)``), each ``(n_elems, nq)``.
+    ``upq`` is the list of the ``d`` velocity components at the quadrature
+    points.  Returns ``tau, gamma`` and their derivatives with respect to the
+    velocity components (through ``|u|`` and through ``h(s)``), each
+    ``(n_elems, nq)``.
     """
-    umag = np.hypot(upq, vpq)
+    d = b.dim
+    umag = np.sqrt(sum(u * u for u in upq))
     moving = umag > 0
     safe = np.where(moving, umag, 1.0)
-    sx = np.where(moving, upq / safe, 1.0)
-    sy = np.where(moving, vpq / safe, 0.0)
-    sgrad = sx[:, :, None] * b.dphi_dx + sy[:, :, None] * b.dphi_dy
+    s = [np.where(moving, upq[k] / safe, 1.0 if k == 0 else 0.0) for k in range(d)]
+    sgrad = sum(s[k][:, :, None] * b.dphi[k] for k in range(d))
     h = 2.0 / np.maximum(np.abs(sgrad).sum(axis=2), 1e-300)
     tau = 1.0 / np.sqrt(inv_dt2 + (2.0 * umag / h) ** 2 + (4.0 * nu / h ** 2) ** 2)
     re_h = umag * h / (2.0 * nu)
@@ -206,19 +197,18 @@ def streamline_parameters(b, upq, vpq, nu, inv_dt2, grad_div):
         gamma = dgamma_du = dgamma_dh = 0.0 * umag
     dtau_du = -(4.0 / h ** 2) * umag * tau ** 3                            # d tau / d|u|
     dtau_dh = tau ** 3 * (4.0 * umag ** 2 / h ** 3 + 32.0 * nu ** 2 / h ** 5)  # d tau / dh
-    dir_ = (np.where(moving, upq / safe, 0.0), np.where(moving, vpq / safe, 0.0))
+    dir_ = [np.where(moving, upq[k] / safe, 0.0) for k in range(d)]
     sgn = np.sign(sgrad)
-    dh_ds = (-0.5 * h ** 2 * np.einsum("eqi,eqi->eq", sgn, b.dphi_dx),
-             -0.5 * h ** 2 * np.einsum("eqi,eqi->eq", sgn, b.dphi_dy))
+    dh_ds = [-0.5 * h ** 2 * np.einsum("eqi,eqi->eq", sgn, b.dphi[k]) for k in range(d)]
     inv_u = np.where(moving, 1.0 / safe, 0.0)
-    dh_du = ((dh_ds[0] * (1.0 - sx * sx) - dh_ds[1] * sy * sx) * inv_u,
-             (-dh_ds[0] * sx * sy + dh_ds[1] * (1.0 - sy * sy)) * inv_u)
-    dtau_d = [dtau_du * dir_[d] + dtau_dh * dh_du[d] for d in range(2)]
-    dgamma_d = [dgamma_du * dir_[d] + dgamma_dh * dh_du[d] for d in range(2)]
+    dh_du = [sum(dh_ds[m] * ((1.0 if m == k else 0.0) - s[m] * s[k]) for m in range(d)) * inv_u
+             for k in range(d)]
+    dtau_d = [dtau_du * dir_[k] + dtau_dh * dh_du[k] for k in range(d)]
+    dgamma_d = [dgamma_du * dir_[k] + dgamma_dh * dh_du[k] for k in range(d)]
     return tau, gamma, dtau_d, dgamma_d
 
 
-def metric_parameters(b, upq, vpq, nu, inv_dt2, grad_div):
+def metric_parameters(b, upq, nu, inv_dt2, grad_div):
     """``tau`` and ``gamma`` from the element metric tensor ``G`` (smooth in ``u``).
 
     ``tau = [(2/dt)^2 + u.G u + nu^2 G:G / 2]^(-1/2)`` (Shakib 1991, Bazilevs
@@ -229,13 +219,14 @@ def metric_parameters(b, upq, vpq, nu, inv_dt2, grad_div):
     ``q = sqrt(u.G u)``, ``Re_h = |u|^2 / (nu q)``.  Returns ``tau, gamma``
     and their derivatives with respect to the velocity components.
     """
-    gxx, gxy, gyy = b.G
-    gu = (gxx * upq + gxy * vpq, gxy * upq + gyy * vpq)                  # G u
-    q2 = upq * gu[0] + vpq * gu[1]                                       # u . G u
-    gg = gxx ** 2 + 2.0 * gxy ** 2 + gyy ** 2                            # G : G
+    d = b.dim
+    G = b.Gmat
+    gu = [sum(G[..., c, k] * upq[k] for k in range(d)) for c in range(d)]   # G u
+    q2 = sum(upq[c] * gu[c] for c in range(d))                              # u . G u
+    gg = np.einsum("...ij,...ij->...", G, G)                                # G : G
     tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * nu ** 2 * gg)
-    dtau_d = [-tau ** 3 * gu[d] for d in range(2)]
-    umag2 = upq ** 2 + vpq ** 2
+    dtau_d = [-tau ** 3 * gu[c] for c in range(d)]
+    umag2 = sum(u * u for u in upq)
     moving = q2 > 0
     q2s = np.where(moving, q2, 1.0)
     q = np.sqrt(q2s)
@@ -244,14 +235,13 @@ def metric_parameters(b, upq, vpq, nu, inv_dt2, grad_div):
         re_h = hu2 / nu
         low = re_h < 3.0
         gamma = np.where(low, hu2 * re_h / 3.0, hu2)
-        u_d = (upq, vpq)
         dgamma_d = [np.where(moving,
                              np.where(low,
-                                      4.0 * umag2 * u_d[d] / (3.0 * nu * q2s)
-                                      - 2.0 * umag2 ** 2 * gu[d] / (3.0 * nu * q2s ** 2),
-                                      2.0 * u_d[d] / q - umag2 * gu[d] / q ** 3),
-                             0.0) for d in range(2)]
+                                      4.0 * umag2 * upq[c] / (3.0 * nu * q2s)
+                                      - 2.0 * umag2 ** 2 * gu[c] / (3.0 * nu * q2s ** 2),
+                                      2.0 * upq[c] / q - umag2 * gu[c] / q ** 3),
+                             0.0) for c in range(d)]
     else:
         gamma = 0.0 * q2
-        dgamma_d = [gamma, gamma]
+        dgamma_d = [gamma] * d
     return tau, gamma, dtau_d, dgamma_d

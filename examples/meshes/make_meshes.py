@@ -6,7 +6,8 @@ annulus meshes ``annulus_tri.msh``, ``annulus_tri6.msh``, ``annulus_quad.msh``,
 its boundary-layer variants ``cylinder_bl.msh`` and the twice-finer
 ``cylinder_bl_fine.msh``), the flat-plate mesh
 ``flat_plate_bl.msh`` and the NACA 0012 far-field mesh
-``airfoil_naca0012_a5_tri6.msh`` next to this file.  The ``_bl`` meshes use
+``airfoil_naca0012_a5_tri6.msh`` and the small 3-D tetrahedral box
+``box_tet10.msh`` next to this file.  The ``_bl`` meshes use
 Gmsh's boundary-layer field, which extrudes quadrilaterals from the wall
 (``quad9`` after the second-order pass) into an otherwise triangular mesh.
 """
@@ -264,6 +265,37 @@ def make_airfoil(name: str = "airfoil_naca0012_a5_tri6", code: str = "0012",
         gmsh.finalize()
 
 
+def make_box_tet10(name: str = "box_tet10", size=(2.0, 1.0, 1.0), lc: float = 0.35):
+    """Unstructured 10-node tetrahedral mesh of a box with the physical surfaces
+    ``left``/``right`` (x), ``bottom``/``top`` (y), ``front``/``back`` (z); a
+    small 3-D mesh for the tests and the 3-D channel example."""
+    gmsh.initialize()
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.model.add(name)
+        a, b, c = size
+        gmsh.model.occ.addBox(0, 0, 0, a, b, c)
+        gmsh.model.occ.synchronize()
+        gmsh.option.setNumber("Mesh.MeshSizeMin", lc)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", lc)
+        planes = {"left": (0, 0.0), "right": (0, a), "bottom": (1, 0.0), "top": (1, b),
+                  "front": (2, 0.0), "back": (2, c)}
+        for tag, (axis, value) in planes.items():
+            faces = [s for (_, s) in gmsh.model.getEntities(2)
+                     if abs(gmsh.model.occ.getCenterOfMass(2, s)[axis] - value) < 1e-9]
+            gmsh.model.addPhysicalGroup(2, faces, name=tag)
+        gmsh.model.addPhysicalGroup(3, [1], name="fluid")
+        gmsh.option.setNumber("Mesh.ElementOrder", 2)
+        gmsh.option.setNumber("Mesh.SecondOrderIncomplete", 0)
+        gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+        gmsh.model.mesh.generate(3)
+        out = HERE / f"{name}.msh"
+        gmsh.write(str(out))
+        return out
+    finally:
+        gmsh.finalize()
+
+
 if __name__ == "__main__":
     for name, (geo, order, quads) in MESHES.items():
         print("wrote", make(name, order, quads, HERE / geo))
@@ -274,3 +306,4 @@ if __name__ == "__main__":
     print("wrote", make_flat_plate())
     print("wrote", make_turbulent_flat_plate())
     print("wrote", make_airfoil())
+    print("wrote", make_box_tet10())
