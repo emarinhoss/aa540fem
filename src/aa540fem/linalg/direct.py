@@ -141,7 +141,14 @@ def factorise(A, backend: str | None = None, threads: int | None = None, check: 
     """
     name = direct_backend(backend)
     if name == "petsc":
-        f = PETScFactorisation(A, threads=threads)
+        from aa540fem.parallel.comm import is_parallel
+
+        if is_parallel():
+            from aa540fem.parallel.distributed import DistributedFactorisation
+
+            f = DistributedFactorisation(A)
+        else:
+            f = PETScFactorisation(A, threads=threads)
         if check:
             rng = np.random.default_rng(0)
             b = rng.standard_normal(A.shape[0])
