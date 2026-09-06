@@ -302,8 +302,51 @@ Comparisons:
   layer; the model was calibrated to reproduce it, so this is the sharpest
   check of the near-wall implementation.
 
-Results: see the run log of `examples/turbulent_flat_plate.py` (the numbers are
-added to this section once the validation run of the current revision completes).
+### Results
+
+Start-up with the viscosity ramp 100, 10, 1: the three stages take 5, 6 and
+11 outer iterations; every flow solve after the first converges with plain
+Newton in 2 to 5 iterations and the whole case runs in 9 minutes (23k nodes,
+direct solver, one core).  The final eddy viscosity reaches `nu_t / nu` of
+about 200 in the wake at the outlet.
+
+Skin friction along the plate (window 3e5 < Re_x < 2e6, i.e. the last 85 %
+of the plate; the two nodes at the trailing edge, where the wall shear is
+singular, are excluded):
+
+| Re_x   | Cf, FEM + SA | White [8] | 1/7-power law |
+|--------|--------------|-----------|---------------|
+| 3.0e5  | 0.00413      | 0.00473   | 0.00462       |
+| 5.0e5  | 0.00384      | 0.00428   | 0.00417       |
+| 1.0e6  | 0.00347      | 0.00376   | 0.00363       |
+| 1.5e6  | 0.00327      | 0.00350   | 0.00335       |
+| 1.9e6  | 0.00318      | 0.00336   | 0.00320       |
+
+Over the window the computed skin friction lies 4.5 to 12.8 % below White's
+correlation (mean 7.7 %) and 0 to 10.6 % below the 1/7-power law (mean
+4.3 %), the deficit shrinking downstream.  Both correlations assume a
+boundary layer that is turbulent from the leading edge, while the model
+without trip term starts laminar: the computed `Cf` follows Blasius up to
+`Re_x` of about 1e4 and rises to the turbulent level between 1e4 and 4e4 as
+`nu_tilde` grows from its freestream value, so the momentum thickness at a
+given `x` is not that of the correlations.  The comparison that removes
+this dependence on the origin is the Coles-Fernholz law at the momentum
+thickness Reynolds number of the computed profile: at `x = 1.5` the profile
+gives `Re_theta = 2885` and `Cf = 0.00326` against the Coles-Fernholz
+value `2 [ln(Re_theta)/0.384 + 4.127]^(-2) = 0.00323` (Nagib, Chauhan and
+Monkewitz [11]), a difference of 1 %.
+
+Law of the wall at `x = 1.5` (`u_tau = 0.0404`, first node at `y+ = 0.40`,
+62 nodes across the layer): the viscous sublayer sits on `u+ = y+`; in the
+log layer `30 < y+ < 300` the computed `u+` exceeds `ln(y+)/0.41 + 5.0` by
+0.14 to 0.86 (20 nodes, i.e. within 4 % of `u+`), the excess growing towards
+the outer edge where the wake component sets in; in the buffer layer
+`5 < y+ < 30` the profile runs up to 1.3 below the two-piece law, which is
+the crudeness of the law there rather than of the solution.  The freestream
+is reached at `u+ = 24.9` (`delta_99 = 0.026`).
+
+The figure `turbulent_plate.png` written by the example shows both
+comparisons.
 
 ## 5. Limitations and next steps
 
@@ -355,3 +398,8 @@ added to this section once the validation run of the current revision completes)
     for large eddy simulation of incompressible flows", *Computer Methods in
     Applied Mechanics and Engineering* 197 (2007) 173-201 (the metric form
     `tau = [4/dt^2 + u.G u + C_I nu^2 G:G]^(-1/2)`).
+11. H. M. Nagib, K. A. Chauhan and P. A. Monkewitz, "Approach to an
+    asymptotic state for zero pressure gradient turbulent boundary layers",
+    *Philosophical Transactions of the Royal Society A* 365 (2007)
+    755-770 (the Coles-Fernholz skin-friction law with kappa = 0.384,
+    C = 4.127).

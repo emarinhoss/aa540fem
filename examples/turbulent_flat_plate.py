@@ -56,7 +56,7 @@ def law_of_the_wall(yplus):
     return np.where(yplus < 11.0, yplus, np.log(np.maximum(yplus, 1e-12)) / KAPPA + B)
 
 
-def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=1.5, verbose=True, **kw):
+def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=None, verbose=True, **kw):
     mesh = read_mesh(mesh_file)
     nu = 1.0 / re
     prob = FlowProblem(mesh, mu=nu, rho=1.0, stabilisation=True,
@@ -75,6 +75,8 @@ def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=1.5, verbose=T
     tr = flow.wall_traction("plate")
     rex = tr["x"] / nu
     cf = 2.0 * tr["tx"]
+    if station is None:
+        station = 0.75 * tr["x"].max()            # x = 1.5 on the plate of length 2
 
     # law of the wall at the station: friction velocity from the local wall shear
     i = np.argmin(np.abs(tr["x"] - station))
@@ -87,8 +89,10 @@ def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=1.5, verbose=T
     # momentum thickness of the profile and the Coles-Fernholz skin friction at
     # that Re_theta (Nagib, Chauhan & Monkewitz 2007: kappa 0.384, C 4.127),
     # the comparison that does not depend on where the boundary layer started
-    theta = np.trapezoid(u * (1.0 - u), y)
-    re_theta = theta / nu
+    inner = y < 0.1                               # the boundary layer, not the far field
+    u_e = u[inner].max()                          # local edge velocity (displacement effect)
+    theta = np.trapezoid(u[inner] / u_e * (1.0 - u[inner] / u_e), y[inner])
+    re_theta = u_e * theta / nu
     cf_cf = 2.0 / (np.log(re_theta) / 0.384 + 4.127) ** 2
     return rans, {"Re_x": rex, "Cf": cf, "Cf_white": cf_white(rex), "Cf_power": cf_power(rex),
                   "yplus": yplus, "uplus": uplus, "u_tau": u_tau, "station": station,
