@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import numpy as np
 
-from aa540fem.linalg.dirichlet import DirichletEliminator
+from aa540fem.backends.pattern import add_matrices
+from aa540fem.linalg.dirichlet import eliminate
 from aa540fem.linalg.newton import NewtonResult
 from aa540fem.linalg.solvers import LinearSolver
 
 
 def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9, atol=1e-11,
                      dtau0=0.01, max_steps=200, dtau_max=1e6, inner_newton=10,
-                     inner_rtol=1e-2, verbose=False) -> NewtonResult:
+                     inner_rtol=1e-2, verbose=False, residual=None) -> NewtonResult:
     """Pseudo-transient continuation: ``R(U) + (M / dtau)(U - U_k) = 0``.
 
     Each pseudo-time step is a backward-Euler step solved with up to
@@ -29,8 +30,11 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
     fixed = np.asarray(fixed, dtype=int)
     zero = np.zeros(fixed.size)
 
-    def evaluate(U):
-        R, J = residual_jacobian(U)
+    def evaluate(U, jacobian=True):
+        if jacobian or residual is None:
+            R, J = residual_jacobian(U)
+        else:
+            R, J = residual(U), None
         R = np.array(R, dtype=float, copy=True)
         R[fixed] = 0.0
         return R, J, np.linalg.norm(R)
@@ -62,13 +66,15 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
                 break
             if inner == inner_newton:
                 break                           # out of inner iterations: reject
-            elim = DirichletEliminator((JV + M / dtau).tocsr(), fixed)
+            if JV is None:
+                RV, JV, _ = evaluate(V)
+            elim = eliminate(add_matrices(JV, M, 1.0 / dtau), fixed)
             delta, _ = LinearSolver(elim.K_bc, method, symmetric=False).solve(
                 elim.apply_rhs(-G, zero))
             alpha = 1.0
             for _ in range(4):                  # backtracking on the step residual
                 Vn = V + alpha * delta
-                RVn, JVn, rVn = evaluate(Vn)
+                RVn, JVn, rVn = evaluate(Vn, jacobian=(alpha == 1.0))
                 Gn = RVn + M @ ((Vn - U) / dtau)
                 Gn[fixed] = 0.0
                 if np.isfinite(rVn) and np.linalg.norm(Gn) < g:
@@ -85,6 +91,8 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
             if verbose:
                 print(f"  PTC step rejected, dtau = {dtau:.3e}")
             continue
+        if JV is None:                          # Jacobian of the accepted state
+            RV, JV, _ = evaluate(V)
         rn = np.linalg.norm(RV)
         ratio = r / max(rn, 1e-300)
         dtau = min(dtau_max, dtau * min(10.0, max(0.5, ratio)))

@@ -96,7 +96,6 @@ def wall_traction(sol: FlowSolution, tag: str, order: int = 3) -> dict:
     mu = sol.problem.mu
     if tag not in mesh.boundary:
         raise ValueError(f"Unknown boundary tag {tag!r}; mesh has {mesh.tags}")
-    wanted = {tuple(sorted(e[:2])) for e in mesh.boundary[tag]}
     s, w1 = gauss_legendre_quad(order)
     p_nodal = sol.p_nodal
     out = {k: [] for k in ("x", "y", "tx", "ty", "nx", "ny", "p", "weight")}
@@ -105,9 +104,8 @@ def wall_traction(sol: FlowSolution, tag: str, order: int = 3) -> dict:
         pel = PRESSURE_ELEMENT[name]
         ref = np.array(el.nodes, dtype=float)
         for face in el.faces:
-            key = np.sort(conn[:, list(face[:2])], axis=1)
-            sel = np.array([tuple(k) in wanted for k in key.tolist()])
-            if not sel.any():
+            sel = boundary_face_elements(mesh, tag, name, face)
+            if sel.size == 0:
                 continue
             ce = conn[sel]
             # quadrature points along the face in natural coordinates
@@ -193,3 +191,20 @@ class TransientFlowSolution:
                       point_data={"velocity": vel, "speed": sol.speed, "p": sol.p_nodal})
 
         return write_series(prefix, self.times, write_step)
+
+
+def boundary_face_elements(mesh, tag, name, face):
+    """Indices of the elements of block ``name`` whose local ``face`` lies on
+    boundary ``tag`` (cached on the mesh: the force callbacks of the time
+    integrators call this every step)."""
+    cache = mesh.__dict__.setdefault("_face_cache", {})
+    key = (tag, name, tuple(face))
+    if key not in cache:
+        edges = np.sort(mesh.boundary[tag][:, :2], axis=1)
+        wanted = edges[:, 0] * mesh.n_nodes + edges[:, 1]
+        conn = mesh.cells[name]
+        pair = np.sort(conn[:, list(face[:2])], axis=1)
+        keys = pair[:, 0] * mesh.n_nodes + pair[:, 1]
+        cache[key] = np.nonzero(np.isin(keys, wanted))[0]
+    return cache[key]
+

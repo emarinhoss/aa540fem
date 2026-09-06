@@ -7,13 +7,12 @@ from __future__ import annotations
 import warnings
 
 import numpy as np
-import scipy.sparse as sp
 
 from aa540fem.incompressible.assembler import FlowAssembler
 from aa540fem.incompressible.problem import FlowProblem
 from aa540fem.incompressible.solution import FlowSolution
 from aa540fem.linalg.continuation import pseudo_transient
-from aa540fem.linalg.dirichlet import DirichletEliminator
+from aa540fem.linalg.dirichlet import eliminate
 from aa540fem.linalg.newton import newton_iterate
 from aa540fem.linalg.solvers import LinearSolver
 
@@ -49,9 +48,8 @@ def project_divergence_free(asm: FlowAssembler, U, fixed, vals):
     with the step, so every step is rejected.
     """
     N = asm.space.N
-    B = (asm.Bx + asm.By).tocsr()
-    P = (asm.M - B.T + B).tocsr()
-    elim = DirichletEliminator(P, fixed)
+    P = asm.pattern.matrix(asm.M_data - asm.BT_data + asm.B_data)   # [[M, -B^T], [B, 0]]
+    elim = eliminate(P, fixed)
     b = np.zeros(asm.space.ndof)
     b[:2 * N] = (asm.M @ U)[:2 * N]
     sol, _ = LinearSolver(elim.K_bc, "direct", symmetric=False).solve(elim.apply_rhs(b, vals))
@@ -85,17 +83,19 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
     F = asm.body_load()
     U = np.zeros(asm.space.ndof) if U0 is None else np.array(U0, dtype=float, copy=True)
     U[fixed] = vals
-    last = {}
 
     def residual_jacobian(U):
         if stokes:
-            B = asm.Bx + asm.By
-            R = asm.K @ U - F - B.T @ U + B @ U
-            J = (asm.K - B.T + B).tocsr()
+            R = asm.K @ U - F - asm.BT @ U + asm.B @ U
+            J = asm.pattern.matrix(asm.K_data - asm.BT_data + asm.B_data)
         else:
             R, J = asm.steady_residual_jacobian(U, F)
-        last["J"] = J
         return R, J
+
+    def residual(U):
+        if stokes:
+            return asm.K @ U - F - asm.BT @ U + asm.B @ U
+        return asm.steady_residual(U, F)
 
     if verbose:
         print(f"Taylor-Hood: {asm.space.N} velocity nodes, {asm.space.Np} pressure nodes, "
@@ -107,7 +107,8 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
         res = newton_iterate(residual_jacobian, U, fixed, method, rtol=rtol, atol=atol,
                              max_newton=max_newton, damping=damping, verbose=verbose,
                              abort_ratio=100.0 if continuation == "auto" else None,
-                             stall_iterations=5 if continuation == "auto" else None)
+                             stall_iterations=5 if continuation == "auto" else None,
+                             residual=residual)
     if not stokes and (continuation == "ptc" or (continuation == "auto" and not res.converged)):
         if verbose and res is not None:
             print("  Newton did not converge; switching to pseudo-transient continuation")
@@ -123,9 +124,9 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
             u_ref = max(float(np.abs(vals[vel]).max()) if vel.any() else 0.0, 1e-3)
             scale = local_pseudo_time_scaling(asm.mesh, problem.mu / problem.rho, u_ref)
             inv = np.concatenate([1.0 / scale, 1.0 / scale, np.ones(asm.space.Np)])
-            M = (sp.diags(inv) @ asm.M).tocsr()
+            M = asm.pattern.matrix(asm.M_data * inv[asm.pattern.rows])   # row scaling
         res = pseudo_transient(residual_jacobian, U, fixed, M, method, rtol, atol, dtau0,
-                               max_ptc, verbose=verbose)
+                               max_ptc, verbose=verbose, residual=residual)
     if not res.converged:
         warnings.warn(f"steady solve did not converge in {res.iterations} iterations "
                       f"(|R| = {res.residuals[-1]:.2e})", stacklevel=2)

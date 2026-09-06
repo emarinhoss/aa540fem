@@ -112,8 +112,14 @@ class Mesh:
 
     @property
     def bc_nodes(self) -> dict:
-        """dict tag -> sorted unique node indices on that boundary."""
-        return {tag: np.unique(edges) for tag, edges in self.boundary.items()}
+        """dict tag -> sorted unique node indices on that boundary (cached; the
+        cache is rebuilt when the set of tags or their edge counts change)."""
+        stamp = tuple((tag, edges.shape) for tag, edges in self.boundary.items())
+        cache = self.__dict__.get("_bc_nodes_cache")
+        if cache is None or cache[0] != stamp:
+            cache = (stamp, {tag: np.unique(edges) for tag, edges in self.boundary.items()})
+            self.__dict__["_bc_nodes_cache"] = cache
+        return cache[1]
 
     # ---------------------------------------------------------------- utils
     def to_grid(self, values) -> np.ndarray:

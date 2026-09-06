@@ -35,6 +35,12 @@ class TaylorHoodSpace:
             raise ValueError("pressure is only defined on corner nodes")
         return 2 * self.N + idx
 
+    def local_dofs(self, conn, pconn):
+        """Element-local global dof numbers ``[u_x nodes, u_y nodes, p corner nodes]``
+        as an ``(n_elems, 2 n + n_corners)`` array, the layout of the element
+        kernels."""
+        return np.concatenate([self.dof_ux(conn), self.dof_uy(conn), self.dof_p(pconn)], axis=1)
+
     def split(self, U):
         """``(u_x, u_y, p)`` with ``p`` on the pressure nodes."""
         U = np.asarray(U)
@@ -74,3 +80,7 @@ class _Block:
         self.X = xe @ self.phi.T
         self.Y = ye @ self.phi.T
         self.pconn = conn[:, :self.pel.n_nodes]
+        self.n = conn.shape[1]                                     # velocity nodes per element
+        self.nc = self.pconn.shape[1]                              # pressure (corner) nodes
+        self.L = 2 * self.n + self.nc                              # local dofs
+        self.ldof = None                                           # set by the assembler

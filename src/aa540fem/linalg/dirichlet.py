@@ -33,3 +33,51 @@ class DirichletEliminator:
         F -= self.K_fixed @ vals
         F[self.nodes] = vals
         return F
+
+
+class PatternDirichlet:
+    """The same elimination for a matrix on a fixed :class:`SparsityPattern`.
+
+    The masks of the entries to zero and the positions of the diagonal are
+    computed once per (pattern, nodes) and cached on the pattern, so a new
+    matrix on the pattern is eliminated in O(nnz) vector operations instead
+    of sparse triple products.  Same interface as :class:`DirichletEliminator`.
+    """
+
+    def __init__(self, K, nodes):
+        pattern = K.pattern
+        self.nodes = np.unique(np.asarray(nodes, dtype=int))
+        self.N = pattern.n
+        key = self.nodes.tobytes()
+        cache = pattern.__dict__.setdefault("_dirichlet_cache", {})
+        if key not in cache:
+            fixed = np.zeros(pattern.n, dtype=bool)
+            fixed[self.nodes] = True
+            colfix = fixed[pattern.indices]
+            cache[key] = (fixed[pattern.rows] | colfix, pattern.diagonal_positions()[self.nodes],
+                          np.nonzero(colfix)[0])
+        self.kill, self.diag, self.colfix = cache[key]
+        data = np.array(K.data, dtype=float, copy=True)
+        self._fixed_data = data[self.colfix]                      # original K[:, nodes] entries
+        self._fixed_rows = pattern.rows[self.colfix]
+        self._fixed_cols = pattern.indices[self.colfix]
+        data[self.kill] = 0.0
+        data[self.diag] = 1.0
+        self.K_bc = pattern.matrix(data)
+
+    def apply_rhs(self, F, vals):
+        F = np.array(F, dtype=float, copy=True)
+        vals = np.broadcast_to(np.asarray(vals, dtype=float), self.nodes.shape)
+        v = np.zeros(self.N)
+        v[self.nodes] = vals
+        F -= np.bincount(self._fixed_rows, weights=self._fixed_data * v[self._fixed_cols],
+                         minlength=self.N)
+        F[self.nodes] = vals
+        return F
+
+
+def eliminate(K, nodes):
+    """Eliminator for ``K``: the pattern-based one when ``K`` carries a pattern."""
+    if getattr(K, "pattern", None) is not None:
+        return PatternDirichlet(K, nodes)
+    return DirichletEliminator(K, nodes)

@@ -10,7 +10,7 @@ import scipy.sparse.linalg as spla
 from aa540fem.incompressible.assembler import FlowAssembler
 from aa540fem.incompressible.problem import SCHEMES, FlowProblem, values_at_pair
 from aa540fem.incompressible.solution import FlowSolution, TransientFlowSolution
-from aa540fem.linalg.dirichlet import DirichletEliminator
+from aa540fem.linalg.dirichlet import eliminate
 from aa540fem.linalg.newton import newton_iterate
 from aa540fem.timestepping.rk import rk45
 
@@ -75,8 +75,7 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
 
     asm = FlowAssembler(problem)
     space = asm.space
-    B = (asm.Bx + asm.By).tocsr()
-    M = asm.M
+    B, BT, M = asm.B, asm.BT, asm.M
     time_dependent = problem.depends_on_time()
 
     fixed, vals = asm.dirichlet(0.0)
@@ -100,20 +99,24 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
         F_new = asm.body_load(t) if time_dependent else F_old
         U_old = U
 
-        def residual_jacobian(Un, U_old=U_old, F_new=F_new, S_old=S_old, th=th, t=t):
-            mt = asm.momentum_terms(Un, t=t, dt=dt, U_old=U_old)
+        def evaluate(Un, jacobian, U_old=U_old, F_new=F_new, S_old=S_old, th=th, t=t):
+            mt = asm.momentum_terms(Un, t=t, dt=dt, U_old=U_old, jacobian=jacobian)
             S = asm.K @ Un + mt.N - F_new
             S[2 * space.N:] = 0.0
-            R = (M @ ((Un - U_old) / dt) + th * S + (1 - th) * S_old - B.T @ Un + B @ Un
+            R = (M @ ((Un - U_old) / dt) + th * S + (1 - th) * S_old - BT @ Un + B @ Un
                  + mt.S)
-            J = (M / dt + th * (asm.K + mt.J_N) + mt.J_S - B.T + B).tocsr()
+            if not jacobian:
+                return R
+            J = asm.pattern.matrix(asm.M_data / dt + th * (asm.K_data + mt.JN_data)
+                                   + mt.JS_data - asm.BT_data + asm.B_data)
             return R, J
 
         guess = U_old.copy()
         guess[fixed] = vals
-        res = newton_iterate(residual_jacobian, guess, fixed, method, rtol=rtol, atol=atol,
-                             max_newton=max_newton, damping=damping,
-                             frozen_jacobian=frozen_jacobian)
+        res = newton_iterate(lambda Un: evaluate(Un, True), guess, fixed, method, rtol=rtol,
+                             atol=atol, max_newton=max_newton, damping=damping,
+                             frozen_jacobian=frozen_jacobian,
+                             residual=lambda Un: evaluate(Un, False))
         if not res.converged:
             raise RuntimeError(f"Newton did not converge at t = {t:.6g} "
                                f"(|R| = {res.residuals[-1]:.2e})")
@@ -157,8 +160,7 @@ def _solve_flow_transient_rk45(problem, dt, t_end, U0, store_every, verbose, cal
     asm = FlowAssembler(problem)
     space = asm.space
     N = space.N
-    B = (asm.Bx + asm.By).tocsr()
-    P = (asm.M - B.T + B).tocsr()
+    P = asm.pattern.matrix(asm.M_data - asm.BT_data + asm.B_data)   # [[M, -B^T], [B, 0]]
     time_dependent = problem.depends_on_time()
     if rtol == 1e-8 and atol == 1e-10:          # theta-scheme Newton defaults: use RK defaults
         rtol, atol = 1e-4, 1e-6
@@ -166,7 +168,7 @@ def _solve_flow_transient_rk45(problem, dt, t_end, U0, store_every, verbose, cal
     fixed, vals0 = asm.dirichlet(0.0)
     is_pressure = fixed >= 2 * N
     fixed_vel = fixed[~is_pressure]
-    elim = DirichletEliminator(P, fixed)
+    elim = eliminate(P, fixed)
     lu = spla.splu(elim.K_bc.tocsc())
     zero_rate = np.zeros(fixed.size)
 
@@ -205,7 +207,7 @@ def _solve_flow_transient_rk45(problem, dt, t_end, U0, store_every, verbose, cal
         U = np.concatenate([y, last["p"]])          # lagged pressure for the stabilisation
         F = asm.body_load(t) if time_dependent else F_const
         if stabilised:
-            mt = asm.momentum_terms(U, t=t, pspg=False)
+            mt = asm.momentum_terms(U, t=t, pspg=False, jacobian=False)
             r = -(asm.K @ U + mt.N + mt.S - F)
         else:
             r = -(asm.K @ U + asm.convection(U, jacobian=False) - F)

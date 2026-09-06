@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from aa540fem.linalg.dirichlet import DirichletEliminator
+from aa540fem.linalg.dirichlet import eliminate
 from aa540fem.linalg.solvers import LinearSolver
 
 
@@ -26,7 +26,7 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
            maxiter=None, rtol: float = 1e-10, atol: float = 1e-12, max_newton: int = 25,
            damping: bool = True, verbose: bool = False,
            frozen_jacobian: bool = False, abort_ratio: float | None = None,
-           stall_iterations: int | None = None) -> NewtonResult:
+           stall_iterations: int | None = None, residual=None) -> NewtonResult:
     """Solve ``R(T) = 0`` with (damped) Newton iterations.
 
     Parameters
@@ -56,17 +56,25 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
     stall_iterations  : stop early (not converged) when this many consecutive
                         iterations fail to reduce the residual by at least
                         5 %, i.e. damped Newton is stalling.
+    residual          : optional callable ``T -> R`` (the residual alone),
+                        used for the trial points of the damping loop and the
+                        convergence check; ``residual_jacobian`` is then only
+                        called where a Jacobian is factorised.  The iterates
+                        are unchanged, the assembly work is not.
     """
     T = np.array(T, dtype=float, copy=True)
     nodes = np.asarray(nodes, dtype=int)
 
-    def evaluate(T):
-        R, J = residual_jacobian(T)
+    def evaluate(T, jacobian=True):
+        if jacobian or residual is None:
+            R, J = residual_jacobian(T)
+        else:
+            R, J = residual(T), None
         R = np.array(R, dtype=float, copy=True)
         R[nodes] = 0.0
         return R, J, np.linalg.norm(R)
 
-    R, J, r = evaluate(T)
+    R, J, r = evaluate(T, jacobian=False)
     result = NewtonResult(T, [r])
     target = max(atol, rtol * r)
     if verbose:
@@ -78,7 +86,9 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
             result.converged = True
             break
         if solver is None or not frozen_jacobian:
-            elim = DirichletEliminator(J, nodes)
+            if J is None:
+                R, J, r = evaluate(T)
+            elim = eliminate(J, nodes)
             solver = LinearSolver(elim.K_bc, method, tol, maxiter, symmetric=False)
         rhs = elim.apply_rhs(-R, np.zeros(nodes.size))
         delta, _ = solver.solve(rhs)
@@ -86,7 +96,9 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
         alpha = 1.0
         for _ in range(6):
             Tn = T + alpha * delta
-            Rn, Jn, rn = evaluate(Tn)
+            # the full step is usually accepted and, unless the Jacobian is
+            # frozen, needs its Jacobian next; backtracked trials only need R
+            Rn, Jn, rn = evaluate(Tn, jacobian=(alpha == 1.0 and not frozen_jacobian))
             if not damping or rn < r:
                 break
             alpha *= 0.5
