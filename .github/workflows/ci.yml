@@ -21,8 +21,12 @@ jobs:
         run: python -m pip install -e ".[mesh,amg,dev]"
       - name: Lint
         run: ruff check .
-      - name: Test
+      - name: Test (NumPy kernels, SuperLU)
         run: python -m pytest -q
+      - name: Install numba
+        run: python -m pip install -e ".[numba,hw]"
+      - name: Test (numba kernels)
+        run: python -m pytest -q tests/test_backends.py tests/test_flow.py tests/test_stabilisation.py tests/test_turbulence.py tests/test_hardware.py
       - name: Run the examples and scripts
         run: |
           python examples/heat_rectangle.py -o ''
@@ -39,3 +43,23 @@ jobs:
           python examples/turbulent_flat_plate.py --no-plot --mesh examples/meshes/flat_plate_bl.msh --re 1e5 --viscosity-ramp 1 --max-outer 2 --outdir /tmp/turb
           python examples/airfoil.py --no-plot --no-steady --t-end 0.05 --output-interval 0.05 --outdir /tmp/airfoil
           python examples/airfoil.py --no-plot --no-steady --scheme theta --dt 0.05 --t-end 0.1 --output-interval 0.05 --outdir /tmp/airfoil_theta
+
+  mpi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install OpenMPI and PETSc (distribution packages)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openmpi-bin libopenmpi-dev petsc-dev
+      - name: Install
+        run: |
+          python -m pip install -e ".[mesh,numba,mpi,hw]"
+          PETSC_DIR=/usr/lib/petsc python -m pip install --no-build-isolation "petsc4py==$(pkg-config --modversion PETSc 2>/dev/null || echo 3.19.6)" || echo "petsc4py unavailable; PETSc tests will skip"
+      - name: MPI tests on 4 ranks
+        run: mpirun --oversubscribe -n 4 python -m pytest -q tests/test_mpi.py tests/test_krylov.py tests/test_direct.py
+

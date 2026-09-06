@@ -37,7 +37,8 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
     T                 : initial guess, already satisfying the Dirichlet values.
     nodes             : Dirichlet node indices (no update there).
     method, tol, maxiter : linear solver settings (``cg`` is refused: the
-                        Jacobian is not symmetric).
+                        Jacobian is not symmetric); ``method`` may also be a
+                        callable ``A -> solver`` with ``solve(b) -> (x, info)``.
     rtol, atol        : stop when ``||R|| <= max(atol, rtol * ||R_0||)``.
     max_newton        : iteration limit.
     damping           : halve the update (up to 5 times) while the residual
@@ -89,7 +90,8 @@ def newton_iterate(residual_jacobian, T, nodes, method: str = "direct", tol: flo
             if J is None:
                 R, J, r = evaluate(T)
             elim = eliminate(J, nodes)
-            solver = LinearSolver(elim.K_bc, method, tol, maxiter, symmetric=False)
+            solver = (method(elim.K_bc) if callable(method)
+                      else LinearSolver(elim.K_bc, method, tol, maxiter, symmetric=False))
         rhs = elim.apply_rhs(-R, np.zeros(nodes.size))
         delta, _ = solver.solve(rhs)
 

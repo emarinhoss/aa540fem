@@ -69,8 +69,9 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
             if JV is None:
                 RV, JV, _ = evaluate(V)
             elim = eliminate(add_matrices(JV, M, 1.0 / dtau), fixed)
-            delta, _ = LinearSolver(elim.K_bc, method, symmetric=False).solve(
-                elim.apply_rhs(-G, zero))
+            solver = (method(elim.K_bc) if callable(method)
+                      else LinearSolver(elim.K_bc, method, symmetric=False))
+            delta, _ = solver.solve(elim.apply_rhs(-G, zero))
             alpha = 1.0
             for _ in range(4):                  # backtracking on the step residual
                 Vn = V + alpha * delta

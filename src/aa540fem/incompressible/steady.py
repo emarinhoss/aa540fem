@@ -73,12 +73,18 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
     ``local_timestep`` (default) the pseudo-time step is scaled by the local
     convective time scale (:func:`local_pseudo_time_scaling`) and ``dtau0``
     is a CFL number; otherwise it is a global time.  Pass ``U0`` (a previous
-    ``FlowSolution.U``) for continuation in Reynolds number.  ``method``
-    should be ``"direct"``: the saddle-point Jacobian is indefinite.
+    ``FlowSolution.U``) for continuation in Reynolds number.  ``method`` is
+    ``"direct"`` (sparse LU; the saddle-point Jacobian is indefinite, so the
+    Krylov methods of :class:`LinearSolver` do not apply) or
+    ``"fieldsplit"`` (PETSc FGMRES with a Schur-complement block
+    preconditioner, see :mod:`aa540fem.linalg.krylov`; the route to GPUs and
+    to systems too large for a factorisation).
     """
     if continuation not in CONTINUATIONS:
         raise ValueError(f"Unknown continuation {continuation!r}; expected one of {CONTINUATIONS}")
     asm = FlowAssembler(problem)
+    if method == "fieldsplit":
+        method = fieldsplit_factory(asm)
     fixed, vals = asm.dirichlet()
     F = asm.body_load()
     U = np.zeros(asm.space.ndof) if U0 is None else np.array(U0, dtype=float, copy=True)
@@ -136,3 +142,33 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
     if path != "newton":
         info["dtau"] = res.steps
     return FlowSolution(problem, asm.space, res.T, info, asm)
+
+
+def fieldsplit_factory(asm, rtol=1e-8, velocity_pc="ilu", gpu=None):
+    """``method`` callable for the Newton/PTC loops: the PETSc fieldsplit solver
+    on the eliminated Jacobian, with the pressure mass matrix scaled by the
+    effective viscosity as Schur-complement preconditioner."""
+    from aa540fem.linalg.krylov import FieldSplitSolver, pressure_mass_matrix
+
+    if gpu is None:
+        try:
+            from aa540fem.hardware import get_config
+
+            gpu = get_config().linear_backend == "petsc-cuda"
+        except ImportError:
+            gpu = False
+    Mp = pressure_mass_matrix(asm)
+    n_vel = 2 * asm.space.N
+
+    class _Adapter:
+        def __init__(self, A):
+            self.solver = FieldSplitSolver(A, n_vel, Mp, rtol=rtol, velocity_pc=velocity_pc,
+                                           gpu=gpu)
+
+        def solve(self, b):
+            x = self.solver.solve(b)
+            return x, {"method": "fieldsplit", "iterations": self.solver.iterations,
+                       "residual": self.solver.residual}
+
+    return _Adapter
+
