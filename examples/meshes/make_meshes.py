@@ -3,8 +3,9 @@
 Requires the ``gmsh`` Python package (``pip install gmsh``).  Writes the
 annulus meshes ``annulus_tri.msh``, ``annulus_tri6.msh``, ``annulus_quad.msh``,
 ``annulus_quad9.msh``, the cylinder-in-channel mesh ``cylinder_tri6.msh`` (and
-its boundary-layer variants ``cylinder_bl.msh``, the twice-finer
-``cylinder_bl_fine.msh`` and the coarser ``cylinder_bl_coarse.msh`` that
+its boundary-layer variants ``cylinder_bl.msh`` and the twice-finer
+``cylinder_bl_fine.msh``), the 3D-1Z cross-section ``cylinder3d1z_bl.msh``
+(``cylinder3d1z.geo``: cylinder at x = 0.5 in the 2.5 channel, coarser, that
 ``examples/cylinder3d.py --extrude`` extrudes into prisms and hexahedra), the flat-plate mesh
 ``flat_plate_bl.msh`` and the NACA 0012 far-field mesh
 ``airfoil_naca0012_a5_tri6.msh`` and the small 3-D tetrahedral box
@@ -362,7 +363,7 @@ if __name__ == "__main__":
                         boundary_layer=([5, 6, 7, 8], 0.0015, 1.2, 0.012)))
     print("wrote", make("cylinder_bl_fine", 2, False, HERE / "cylinder.geo",
                         boundary_layer=([5, 6, 7, 8], 0.0008, 1.15, 0.012), size_factor=0.5))
-    print("wrote", make("cylinder_bl_coarse", 2, False, HERE / "cylinder.geo",
+    print("wrote", make("cylinder3d1z_bl", 2, False, HERE / "cylinder3d1z.geo",
                         boundary_layer=([5, 6, 7, 8], 0.002, 1.25, 0.012), size_factor=1.6))
     print("wrote", make_flat_plate())
     print("wrote", make_turbulent_flat_plate())

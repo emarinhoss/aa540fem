@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
+import warnings
 
 import numpy as np
 
@@ -238,7 +239,7 @@ class DistributedFlowSystem:
             pc = ksp.getPC()
             pc.setType("lu")
             pc.setFactorSolverType("mumps" if mumps_available() else "petsc")
-            opts["mat_mumps_icntl_14"] = 40
+            opts[f"{prefix}mat_mumps_icntl_14"] = 40          # 40 % extra pivoting workspace
         elif method == "fieldsplit":
             n_own = self.dim * self.part.owned.size
             is_u = PETSc.IS().createStride(n_own, first=self.r0, step=1, comm=self.comm)
@@ -305,6 +306,21 @@ class DistributedFlowSystem:
             self._lsc = lsc
         self.ksp.setUp()
         self.factorisations += 1
+        if method == "direct":
+            self._check_factorisation()
+
+    def _check_factorisation(self):
+        """Raise if MUMPS reports an error (a failed factorisation otherwise returns
+        garbage from the solve and the Newton line search fails silently)."""
+        try:
+            F = self.ksp.getPC().getFactorMatrix()
+            info = F.getMumpsInfog(1)
+        except Exception:                                    # not MUMPS
+            return
+        if info < 0:
+            raise RuntimeError(f"MUMPS factorisation failed: INFOG(1) = {info}, "
+                               f"INFOG(2) = {F.getMumpsInfog(2)} (-9: raise icntl_14, "
+                               "-10: singular matrix)")
 
     # -- Newton ---------------------------------------------------------------------
     def newton(self, evaluate, method="direct", rtol=1e-9, atol=1e-11, max_newton=30,
@@ -342,6 +358,9 @@ class DistributedFlowSystem:
                     break
                 alpha *= 0.5
             else:
+                if self.rank == 0:
+                    warnings.warn(f"distributed Newton: line search failed at iteration {it} "
+                                  f"(|R| = {r:.3e})", RuntimeWarning, stacklevel=2)
                 break
             if frozen_jacobian and rn > r / 3.0:
                 have_solver = False

@@ -239,26 +239,33 @@ def _wall_traction_3d(sol: FlowSolution, tag: str, order) -> dict:
     return {k: v[order_] for k, v in out.items()}
 
 
+# corner-node simplices tiling the non-simplex pressure elements (VTK ordering)
+_SUB_SIMPLICES = {
+    "quad": ((0, 1, 2), (0, 2, 3)),
+    "wedge": ((0, 1, 2, 3), (1, 2, 3, 4), (2, 3, 4, 5)),
+    "hexahedron": ((0, 1, 3, 4), (1, 2, 3, 6), (1, 4, 5, 6), (3, 4, 6, 7), (1, 3, 4, 6)),
+}
+
+
 def pressure_at_points(sol: FlowSolution, points: np.ndarray) -> np.ndarray:
+    """Pressure at arbitrary points: barycentric interpolation of the corner
+    values in the element that contains each point (quadrilaterals, prisms and
+    hexahedra are tiled by simplices first, which is exact for the pressure of a
+    parallelepiped cell and second-order accurate otherwise); a point outside the
+    mesh takes the values of the nearest element."""
     mesh = sol.mesh
     d = mesh.dim
     p = sol.p
     out = np.full(points.shape[0], np.nan)
     best = np.full(points.shape[0], np.inf)
     for name, conn in mesh.cells.items():
-        el = get_element(name)
-        nc = el.n_corners
-        if nc != d + 1:                                     # not a simplex: nearest node
-            nodes = sol.space.pressure_nodes
-            dist = np.linalg.norm(points[:, None, :] - mesh.points[nodes][None, :, :], axis=2)
-            k = dist.argmin(axis=1)
-            closer = dist[np.arange(points.shape[0]), k] < best
-            out[closer] = p[k[closer]]
-            best[closer] = dist[np.arange(points.shape[0]), k][closer]
-            continue
-        corners = mesh.points[conn[:, :nc]]                 # (ne, d+1, d)
-        # barycentric coordinates of every point in every element (small meshes:
-        # chunk the elements to bound the memory)
+        pel = PRESSURE_ELEMENT[name]
+        if pel.n_nodes == d + 1:
+            simp = conn[:, :d + 1]
+        else:
+            simp = np.vstack([conn[:, list(t)] for t in _SUB_SIMPLICES[pel.name]])
+        corners = mesh.points[simp]                          # (ne, d+1, d)
+        # barycentric coordinates of every point in every simplex
         T = np.transpose(corners[:, 1:, :] - corners[:, :1, :], (0, 2, 1))    # (ne, d, d)
         Tinv = np.linalg.inv(T)
         for q, x in enumerate(points):
@@ -268,7 +275,7 @@ def pressure_at_points(sol: FlowSolution, points: np.ndarray) -> np.ndarray:
             e = int(violation.argmin())
             if violation[e] < best[q]:
                 best[q] = violation[e]
-                pe = p[sol.space.p_index[conn[e, :nc]]]
+                pe = p[sol.space.p_index[simp[e]]]
                 out[q] = float(np.clip(lam[e], 0.0, 1.0) @ pe / max(np.clip(lam[e], 0, 1).sum(),
                                                                        1e-300))
     return out

@@ -101,6 +101,9 @@ def test_poiseuille_is_exact_on_prisms_and_hexahedra(stabilisation):
     tr = sol.wall_traction("bottom")
     assert np.allclose(tr["tx"], 4 * mu) and np.allclose(tr["ny"], -1.0)
     assert np.isclose(tr["weight"].sum(), 1.0)
+    # point evaluation of the pressure inside prisms and hexahedra
+    probes = np.array([[0.3, 0.4, 0.2], [1.7, 0.1, 0.45], [1.0, 0.5, 0.25]])
+    assert np.allclose(sol.pressure_at(probes), 8 * mu * (2.0 - probes[:, 0]), atol=1e-12)
 
 
 def test_numba_matches_numpy_on_prisms():
@@ -204,3 +207,23 @@ def test_prism_in_the_registry():
     from aa540fem.core.elements import PRESSURE_ELEMENT
 
     assert PRESSURE_ELEMENT["wedge18"].name == "wedge"
+
+
+def test_pressure_at_points_is_exact_for_linear_fields_on_every_cell_type():
+    from aa540fem.core.mesh import box
+    from aa540fem.incompressible.solution import FlowSolution
+
+    meshes = [box(2.0, 1.0, 0.5, (3, 2, 2), "hexahedron27", stretch=1.0),
+              box(2.0, 1.0, 0.5, (2, 2, 1), "tetra10"), geometry(2.0, 1.0, 3, "quad9"),
+              geometry(2.0, 1.0, 3, "triangle6"), mixed_channel(2).extrude(0.5, layers=2)]
+    rng = np.random.default_rng(0)
+    for mesh in meshes:
+        d = mesh.dim
+        prob = FlowProblem(mesh, mu=1.0, rho=1.0, bc={"left": (1.0,) + (0.0,) * (d - 1)})
+        asm = FlowAssembler(prob)
+        U = np.zeros(asm.space.ndof)
+        coeff = np.array([2.0, -1.0, 0.5])[:d]
+        U[asm.space.n_vel:] = 1 + mesh.points[asm.space.pressure_nodes] @ coeff
+        sol = FlowSolution(prob, asm.space, U, {})
+        pts = rng.random((20, d)) * np.array([2.0, 1.0, 0.5])[:d]
+        assert np.abs(sol.pressure_at(pts) - (1 + pts @ coeff)).max() < 1e-12

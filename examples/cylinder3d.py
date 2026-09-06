@@ -101,6 +101,7 @@ def main(argv=None):
     if rank() != 0:
         return sol
     print(f"steady solve: {sol.info['iterations']} Newton iterations, {wall:.0f} s"
+          + ("" if sol.info.get("converged", True) else ", NOT CONVERGED")
           + (f", {max(sol.info['linear_iterations'])} FGMRES it. max"
              if sol.info.get("linear_iterations") else ""))
     coef = coefficients(sol)

@@ -125,8 +125,8 @@ the whole mesh. Under `mpirun`, code that only rank 0 runs must not call
 `make_meshes.py` from the `.geo` files (`cylinder.geo` sizes come only from its
 background field; `make(..., size_factor=)` scales them). Tests and benchmarks
 read `cylinder_bl.msh` and `flat_plate_bl.msh`; the `_bl` meshes mix quad9
-boundary-layer cells with triangle6 (`cylinder_bl_coarse.msh` is the base of
-the extruded 3D-1Z run). `box_tet10.msh` is the small 3D tetrahedral mesh;
+boundary-layer cells with triangle6 (`cylinder3d1z_bl.msh`, the 3D-1Z
+cross-section, is the base of the extruded 3D-1Z run). `box_tet10.msh` is the small 3D tetrahedral mesh;
 `core.mesh.box(..., stretch=)` builds structured, optionally wall-clustered 3D
 meshes without gmsh.
 
