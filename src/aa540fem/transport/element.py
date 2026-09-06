@@ -188,6 +188,13 @@ def element_metric_nd(inverse, family):
     return np.einsum("...ki,kl,...lj->...ij", Ji, T, Ji)
 
 
+def supg_length_nd(s, dphi):
+    """Element length in the unit direction ``s`` (tuple of ``d`` arrays ``(n_elems, nq)``)
+    from the gradient tuple ``dphi``: ``h = 2 / sum_i |s . grad phi_i|``."""
+    sgrad = sum(s[k][:, :, None] * dphi[k] for k in range(len(s)))
+    return 2.0 / np.maximum(np.abs(sgrad).sum(axis=2), 1e-300)
+
+
 def supg_length(sx, sy, dphi_dx, dphi_dy):
     """Element length in the direction ``s = (sx, sy)`` (unit vectors, ``(n_elems, nq)``):
     ``h = 2 / sum_i |s . grad phi_i|`` (Tezduyar)."""

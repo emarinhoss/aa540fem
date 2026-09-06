@@ -76,8 +76,9 @@ loop over components; `dirichlet_dofs`, the body force and every user
 callable take `d` coordinates (`call_coeff_nd`); `wall_traction` integrates
 over faces in 3-D; `box()` builds structured hexahedral or tetrahedral
 meshes and `read_mesh` reads 3-D Gmsh files (physical surfaces become the
-tags).  Still 2-D: the scalar transport solver (the original heat code),
-the wall distance and the Spalart-Allmaras model.
+tags); the wall distance (point-triangle), the Spalart-Allmaras solver
+and the RANS coupling follow the mesh dimension too.  Still 2-D: the
+scalar transport solver (the original heat code).
 
 **Turbulence.**  A `turbulence/` subpackage with one module per closure
 (Spalart-Allmaras, k-omega SST): each adds transported scalar(s) whose

@@ -251,6 +251,50 @@ class Mesh:
 
         return wall_distance(self, tags)
 
+    def extrude(self, depth: float, layers: int = 1, tags=("front", "back")) -> "Mesh":
+        """Extrude a 2-D ``quad9`` mesh in ``z`` into ``hexahedron27`` cells.
+
+        ``layers`` cells over ``depth``; the boundary edges become quad9 faces
+        under the same tags and the two ``z`` planes get ``tags``.  A 2-D
+        solution extruded this way (with ``u_z = 0`` on the ``z`` planes) is an
+        exact 3-D solution, which makes this the consistency check of the 3-D
+        code paths.
+        """
+        if self.dim != 2 or set(self.cells) != {"quad9"}:
+            raise ValueError("extrude needs a 2-D quad9 mesh")
+        conn = self.cells["quad9"]
+        N = self.n_nodes
+        nz = 2 * layers + 1
+        zz = np.linspace(0.0, depth, nz)
+        points = np.vstack([np.column_stack([self.points, np.full(N, z)]) for z in zz])
+        # hexahedron27 (VTK) node = (quad9 node, plane offset within the cell: 0 bottom,
+        # 1 mid, 2 top)
+        pattern = [(0, 0), (1, 0), (2, 0), (3, 0), (0, 2), (1, 2), (2, 2), (3, 2),
+                   (4, 0), (5, 0), (6, 0), (7, 0), (4, 2), (5, 2), (6, 2), (7, 2),
+                   (0, 1), (1, 1), (2, 1), (3, 1),
+                   (7, 1), (5, 1), (4, 1), (6, 1), (8, 0), (8, 2), (8, 1)]
+        cells = []
+        for layer in range(layers):
+            base = 2 * layer
+            cells.append(np.column_stack([conn[:, q] + (base + off) * N for q, off in pattern]))
+        cells = {"hexahedron27": np.vstack(cells)}
+        boundary = {}
+        for tag, edges in self.boundary.items():
+            faces = []
+            for layer in range(layers):
+                base = 2 * layer
+                a, b, m = edges[:, 0], edges[:, 1], edges[:, 2]
+                faces.append(np.column_stack([
+                    a + base * N, b + base * N, b + (base + 2) * N, a + (base + 2) * N,
+                    m + base * N, b + (base + 1) * N, m + (base + 2) * N, a + (base + 1) * N,
+                    m + (base + 1) * N]))
+            boundary[tag] = np.vstack(faces)
+        boundary[tags[0]] = conn.copy()                                  # z = 0
+        boundary[tags[1]] = conn + (nz - 1) * N                          # z = depth
+        mesh = Mesh(points, cells, boundary)
+        mesh.check_orientation()
+        return mesh
+
     def centroids(self) -> np.ndarray:
         """Physical centroid of every element, concatenated in block order."""
         out = []

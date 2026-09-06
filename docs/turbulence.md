@@ -108,11 +108,13 @@ All are in `SpalartAllmaras` (`spalart_allmaras.py`) as dataclass fields.
 ### 3.2 Wall distance
 
 `Mesh.wall_distance(tags)` computes for every node the minimum distance to
-the boundary edges of the wall tags, treating each half of a quadratic edge
-as a straight segment (exact on straight walls; the error on a curved wall
-is the sagitta of a half edge, checked on the annulus in the tests).  The
-computation is a vectorised point-segment distance in chunks of nodes; for
-the meshes here it takes well under a second.  At the quadrature points
+the boundary faces of the wall tags: in 2-D each half of a quadratic edge
+is a straight segment (exact on straight walls; the error on a curved wall
+is the sagitta of a half edge, checked on the annulus in the tests), in
+3-D each quadratic triangle is split into four and each quadrilateral into
+eight flat sub-triangles and the point-triangle distance (Ericson's
+region test, `core/wall_distance.py`) is taken.  The computation is
+vectorised in chunks of nodes; for the meshes here it takes seconds.  At the quadrature points
 the distance is interpolated from the corner nodes with the linear shape
 functions, a convex combination that stays between the nodal values: the
 quadratic interpolant undershoots to negative values in the distorted cells
@@ -349,10 +351,32 @@ is reached at `u+ = 24.9` (`delta_99 = 0.026`).
 The figure `turbulent_plate.png` written by the example shows both
 comparisons.
 
+### 3.8 Three dimensions
+
+The solver and its numba kernel take the dimension from the mesh: the
+gradients are tuples of `d` arrays, the vorticity magnitude is `|curl u|`
+in 3-D (`|dv/dx - du/dy|` in 2-D), the SUPG parameter uses the `d x d`
+metric tensor or the streamline length in `d` dimensions, and
+`set_velocity` takes the `d` components (`solve_rans` passes
+`flow.velocity`).  The consistency checks (`tests/test_turbulence3d.py`)
+extrude a 2-D quad9 mesh into one layer of 27-node hexahedra
+(`Mesh.extrude`) with symmetry planes: the Galerkin part of the 3-D
+residual of a z-independent field is exactly the 2-D residual times the
+depth (weights 1/6, 4/6, 1/6 on the three node planes), the steady SA
+solve without SUPG reproduces the 2-D field to 1e-8, and with SUPG the
+3-D solution and the coupled RANS eddy viscosity and wall force agree with
+2-D to a fraction of a per cent (the stabilisation parameters see the third
+mesh dimension, so exact equality is not expected).  The numba kernel
+matches the NumPy one to 1e-12 in 3-D.  The 3-D wall-resolved plate case
+itself has not been run: the extrusion needs a quad9-only mesh, and a
+wall-resolved 3-D mesh of that size needs the Krylov solver and hours.
+
 ## 5. Limitations and next steps
 
-- Two-dimensional, steady RANS; the model is used without the trip term,
-  i.e. fully turbulent from the leading edge (no transition prediction).
+- Steady RANS; the model is used without the trip term, i.e. fully
+  turbulent from the leading edge (no transition prediction).  3-D runs are
+  consistency-checked against 2-D but not yet validated against a 3-D
+  turbulent reference case.
 - Wall-resolved only: the first cell must be at `y+` of order one.  Wall
   functions would allow coarser meshes and are a boundary-condition
   addition in `SpalartAllmarasSolver`.
@@ -361,8 +385,9 @@ comparisons.
   flow plus turbulence would converge faster but needs the
   cross-derivatives.
 - The direct solver limits the mesh to roughly a hundred thousand
-  unknowns; wall-resolved meshes at flight Reynolds numbers need the
-  iterative saddle-point solver of the roadmap.
+  unknowns in 3-D; wall-resolved meshes at flight Reynolds numbers need
+  the fieldsplit Krylov solver (`docs/parallel.md`) and the MPI domain
+  decomposition.
 - The rotation/curvature correction ("SA-RC") and the quadratic
   constitutive relation ("SA-QCR"), useful for wing-body junctions and
   vortices, are not implemented.

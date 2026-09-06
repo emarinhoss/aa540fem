@@ -15,10 +15,11 @@ f_t2 trip term ("SA-neg-noft2"); the original model is Spalart & Allmaras,
 La Recherche Aerospatiale 1, 1994 (AIAA 92-0439).
 
 Discretisation: the same quadratic elements and quadrature blocks as the
-velocity, SUPG streamline upwinding with the convective velocity of the
-flow solution, source terms and their derivatives evaluated at the
-quadrature points (derivatives by central finite differences), Newton with
-pseudo-transient continuation.
+velocity (2-D or 3-D), SUPG streamline upwinding with the convective
+velocity of the flow solution, source terms and their derivatives evaluated
+at the quadrature points (derivatives by central finite differences), Newton
+with pseudo-transient continuation.  The vorticity magnitude is
+``|dv/dx - du/dy|`` in 2-D and ``|curl u|`` in 3-D.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from aa540fem.backends import ScatterPlan, SparsityPattern, assembly_backend, sc
 from aa540fem.incompressible.space import _Block
 from aa540fem.linalg.continuation import pseudo_transient
 from aa540fem.linalg.newton import NewtonResult
-from aa540fem.transport.element import supg_length
+from aa540fem.transport.element import supg_length_nd
 
 FD_STEP = 1e-6
 
@@ -91,12 +92,13 @@ class SpalartAllmaras:
         guarded = omega + omega * (self.cv2 ** 2 * omega + self.cv3 * sbar) / denom
         return np.where(low, guarded, omega + sbar)
 
-    def source(self, nu_tilde, gx, gy, omega, d):
-        """Production minus destruction plus the ``c_b2`` gradient term, at points."""
+    def source(self, nu_tilde, gx, gy, omega, d, gz=None):
+        """Production minus destruction plus the ``c_b2`` gradient term, at points
+        (``gz`` is the third gradient component in 3-D)."""
         nt = np.asarray(nu_tilde, dtype=float)
         d = np.maximum(d, 1e-12)
         chi = nt / self.nu
-        grad2 = gx ** 2 + gy ** 2
+        grad2 = gx ** 2 + gy ** 2 + (0.0 if gz is None else gz ** 2)
         # positive branch
         s_tilde = np.maximum(self.modified_vorticity(nt, omega, d), 1e-300)
         r = np.clip(nt / (s_tilde * self.kappa ** 2 * d ** 2), -self.r_limit, self.r_limit)
@@ -121,8 +123,7 @@ class SpalartAllmarasSolver:
         self.element_length = element_length      # SUPG cell measure, as in FlowProblem
         self.backend = assembly_backend(backend)
         self.N = mesh.n_nodes
-        if mesh.dim != 2:
-            raise NotImplementedError("the Spalart-Allmaras solver is two-dimensional")
+        self.dim = mesh.dim
         self.blocks = [_Block(mesh, name, conn, order) for name, conn in mesh.cells.items()]
         self.distance = mesh.wall_distance(wall_tags)
         self.pattern = SparsityPattern.from_element_dofs(self.N, [b.conn for b in self.blocks])
@@ -130,21 +131,33 @@ class SpalartAllmarasSolver:
                                 [self.pattern.scatter_map(b.conn, b.conn) for b in self.blocks])
         self.M = self.pattern.matrix(self.plan.assemble(
             [np.einsum("eq,qi,qj->eij", b.wh, b.phi, b.phi) for b in self.blocks]))
-        self.u = np.zeros(self.N)
-        self.v = np.zeros(self.N)
+        self.vel = np.zeros((self.dim, self.N))
+        self.supg = True                          # default of residual_jacobian
 
-    def set_velocity(self, u, v):
-        self.u = np.asarray(u, dtype=float)
-        self.v = np.asarray(v, dtype=float)
+    def set_velocity(self, *components):
+        """The frozen velocity field, one nodal array per component (``d`` of them)."""
+        if len(components) != self.dim:
+            raise ValueError(f"expected {self.dim} velocity components")
+        self.vel = np.array([np.asarray(c, dtype=float) for c in components])
 
-    def residual_jacobian(self, nu_tilde, supg: bool = True):
+    @property
+    def u(self):
+        return self.vel[0]
+
+    @property
+    def v(self):
+        return self.vel[1]
+
+    def residual_jacobian(self, nu_tilde, supg: bool | None = None):
         """Weak residual of the steady equation and its Jacobian (CSR).
 
-        Convection, diffusion and source are Galerkin terms; SUPG applies the
-        streamline weight to the convective and source parts of the strong
-        residual (the diffusion part is omitted).  Source and diffusivity
-        derivatives are central finite differences at the quadrature points.
+        Convection, diffusion and source are Galerkin terms; SUPG (``supg``,
+        default the solver's ``supg`` attribute) applies the streamline weight
+        to the convective and source parts of the strong residual (the
+        diffusion part is omitted).  Source and diffusivity derivatives are
+        central finite differences at the quadrature points.
         """
+        supg = self.supg if supg is None else supg
         nt = np.asarray(nu_tilde, dtype=float)
         R = np.zeros(self.N)
         J_e = []
@@ -154,7 +167,7 @@ class SpalartAllmarasSolver:
             c = constants(self.model, FD_STEP)
             metric = self.element_length == "metric"
             for b in self.blocks:
-                Re_, Je = sa_local(b, nt, self.u, self.v, self.distance, c, supg, metric)
+                Re_, Je = sa_local(b, nt, self.vel, self.distance, c, supg, metric)
                 R += scatter_vector(self.N, b.conn, Re_)
                 J_e.append(Je)
         else:
@@ -167,68 +180,73 @@ class SpalartAllmarasSolver:
     def _local_numpy(self, b, nt, supg):
         """Element residual ``(ne, n)`` and Jacobian ``(ne, n, n)`` (NumPy reference)."""
         m = self.model
-        if True:
-            conn = b.conn
-            nte = nt[conn]
-            ntq = nte @ b.phi.T
-            gx = np.einsum("eqi,ei->eq", b.dphi_dx, nte)
-            gy = np.einsum("eqi,ei->eq", b.dphi_dy, nte)
-            ue, ve = self.u[conn], self.v[conn]
-            uq, vq = ue @ b.phi.T, ve @ b.phi.T
-            omega = np.abs(np.einsum("eqi,ei->eq", b.dphi_dx, ve)
-                           - np.einsum("eqi,ei->eq", b.dphi_dy, ue))
-            # distance from the corner nodes with the linear shape functions: a
-            # convex combination, so it stays between the nodal values (the
-            # quadratic interpolant undershoots to negative values in the
-            # distorted cells around the ends of a wall)
-            dq = np.maximum(self.distance[b.pconn] @ b.psi.T, 1e-12)
-            wh = b.wh
+        d = b.dim
+        conn = b.conn
+        nte = nt[conn]
+        ntq = nte @ b.phi.T
+        g = [np.einsum("eqi,ei->eq", b.dphi[k], nte) for k in range(d)]
+        ue = [self.vel[c][conn] for c in range(d)]
+        uq = [ue[c] @ b.phi.T for c in range(d)]
+        grad = [[np.einsum("eqi,ei->eq", b.dphi[k], ue[c]) for k in range(d)] for c in range(d)]
+        if d == 2:
+            omega = np.abs(grad[1][0] - grad[0][1])
+        else:
+            omega = np.sqrt((grad[2][1] - grad[1][2]) ** 2 + (grad[0][2] - grad[2][0]) ** 2
+                            + (grad[1][0] - grad[0][1]) ** 2)
+        # distance from the corner nodes with the linear shape functions: a
+        # convex combination, so it stays between the nodal values (the
+        # quadratic interpolant undershoots to negative values in the
+        # distorted cells around the ends of a wall)
+        dq = np.maximum(self.distance[b.pconn] @ b.psi.T, 1e-12)
+        wh = b.wh
+        gz = g[2] if d == 3 else None
 
-            # diffusivity and its derivative
-            D = m.diffusivity(ntq)
-            h_n = FD_STEP * (m.nu + np.abs(ntq))
-            dD = (m.diffusivity(ntq + h_n) - m.diffusivity(ntq - h_n)) / (2 * h_n)
-            # source and its derivatives with respect to nu_tilde and its gradient
-            s = m.source(ntq, gx, gy, omega, dq)
-            s_n = (m.source(ntq + h_n, gx, gy, omega, dq)
-                   - m.source(ntq - h_n, gx, gy, omega, dq)) / (2 * h_n)
-            h_g = FD_STEP * (1.0 + np.abs(gx) + np.abs(gy))
-            s_gx = (m.source(ntq, gx + h_g, gy, omega, dq)
-                    - m.source(ntq, gx - h_g, gy, omega, dq)) / (2 * h_g)
-            s_gy = (m.source(ntq, gx, gy + h_g, omega, dq)
-                    - m.source(ntq, gx, gy - h_g, omega, dq)) / (2 * h_g)
+        # diffusivity and its derivative
+        D = m.diffusivity(ntq)
+        h_n = FD_STEP * (m.nu + np.abs(ntq))
+        dD = (m.diffusivity(ntq + h_n) - m.diffusivity(ntq - h_n)) / (2 * h_n)
+        # source and its derivatives with respect to nu_tilde and its gradient
+        s = m.source(ntq, g[0], g[1], omega, dq, gz)
+        s_n = (m.source(ntq + h_n, g[0], g[1], omega, dq, gz)
+               - m.source(ntq - h_n, g[0], g[1], omega, dq, gz)) / (2 * h_n)
+        h_g = FD_STEP * (1.0 + sum(np.abs(gk) for gk in g))
+        s_g = []
+        for k in range(d):
+            plus = [gk + (h_g if j == k else 0.0) for j, gk in enumerate(g)]
+            minus = [gk - (h_g if j == k else 0.0) for j, gk in enumerate(g)]
+            s_g.append((m.source(ntq, plus[0], plus[1], omega, dq, plus[2] if d == 3 else None)
+                        - m.source(ntq, minus[0], minus[1], omega, dq,
+                                   minus[2] if d == 3 else None)) / (2 * h_g))
 
-            ugrad = uq[:, :, None] * b.dphi_dx + vq[:, :, None] * b.dphi_dy   # u . grad phi_j
-            conv = uq * gx + vq * gy                                          # u . grad nu_tilde
-            grad_i = b.dphi_dx * gx[:, :, None] + b.dphi_dy * gy[:, :, None]  # grad phi_i . grad nt
-            dS = (s_n[:, :, None] * b.phi[None] + s_gx[:, :, None] * b.dphi_dx
-                  + s_gy[:, :, None] * b.dphi_dy)                              # d s / d nt_j
+        ugrad = sum(uq[k][:, :, None] * b.dphi[k] for k in range(d))        # u . grad phi_j
+        conv = sum(uq[k] * g[k] for k in range(d))                          # u . grad nu_tilde
+        grad_i = sum(b.dphi[k] * g[k][:, :, None] for k in range(d))        # grad phi_i . grad nt
+        dS = s_n[:, :, None] * b.phi[None] + sum(s_g[k][:, :, None] * b.dphi[k]
+                                                 for k in range(d))         # d s / d nt_j
 
-            Re_ = (np.einsum("eq,qi->ei", wh * (conv - s), b.phi)
-                   + np.einsum("eq,eqi->ei", wh * D, grad_i))
-            Je = (np.einsum("eq,qi,eqj->eij", wh, b.phi, ugrad - dS)
-                  + np.einsum("eq,eqi,eqj->eij", wh * D, b.dphi_dx, b.dphi_dx)
-                  + np.einsum("eq,eqi,eqj->eij", wh * D, b.dphi_dy, b.dphi_dy)
-                  + np.einsum("eq,eqi,qj->eij", wh * dD, grad_i, b.phi))
-            if supg:
-                if self.element_length == "metric":
-                    gxx, gxy, gyy = b.G
-                    q2 = gxx * uq * uq + 2.0 * gxy * uq * vq + gyy * vq * vq   # u . G u
-                    gg = gxx ** 2 + 2.0 * gxy ** 2 + gyy ** 2                  # G : G
-                    tau = 1.0 / np.sqrt(q2 + 0.5 * D ** 2 * gg)
-                else:
-                    umag = np.hypot(uq, vq)
-                    moving = umag > 0
-                    safe = np.where(moving, umag, 1.0)
-                    sx = np.where(moving, uq / safe, 1.0)
-                    sy = np.where(moving, vq / safe, 0.0)
-                    h = supg_length(sx, sy, b.dphi_dx, b.dphi_dy)
-                    tau = 1.0 / np.sqrt((2.0 * umag / h) ** 2 + (4.0 * D / h ** 2) ** 2)
-                w_i = tau[:, :, None] * ugrad
-                Re_ = Re_ + np.einsum("eq,eqi->ei", wh * (conv - s), w_i)
-                Je = Je + np.einsum("eq,eqi,eqj->eij", wh, w_i, ugrad - dS)
-
-            return Re_, Je
+        Re_ = (np.einsum("eq,qi->ei", wh * (conv - s), b.phi)
+               + np.einsum("eq,eqi->ei", wh * D, grad_i))
+        Je = (np.einsum("eq,qi,eqj->eij", wh, b.phi, ugrad - dS)
+              + sum(np.einsum("eq,eqi,eqj->eij", wh * D, b.dphi[k], b.dphi[k]) for k in range(d))
+              + np.einsum("eq,eqi,qj->eij", wh * dD, grad_i, b.phi))
+        if supg:
+            if self.element_length == "metric":
+                G = b.Gmat
+                gu = [sum(G[..., c, k] * uq[k] for k in range(d)) for c in range(d)]
+                q2 = sum(uq[c] * gu[c] for c in range(d))                   # u . G u
+                gg = np.einsum("...ij,...ij->...", G, G)                    # G : G
+                tau = 1.0 / np.sqrt(q2 + 0.5 * D ** 2 * gg)
+            else:
+                umag = np.sqrt(sum(u * u for u in uq))
+                moving = umag > 0
+                safe = np.where(moving, umag, 1.0)
+                sdir = [np.where(moving, uq[k] / safe, 1.0 if k == 0 else 0.0) for k in range(d)]
+                h = supg_length_nd(sdir, b.dphi)
+                tau = 1.0 / np.sqrt((2.0 * umag / h) ** 2 + (4.0 * D / h ** 2) ** 2)
+            w_i = tau[:, :, None] * ugrad
+            Re_ = Re_ + np.einsum("eq,eqi->ei", wh * (conv - s), w_i)
+            Je = Je + np.einsum("eq,eqi,eqj->eij", wh, w_i, ugrad - dS)
+        return Re_, Je
 
     def solve(self, nu_tilde0, fixed, values, method="direct", rtol=1e-6, atol=1e-30,
               dtau0=1.0, max_steps=200, inner_newton=6, verbose=False,
@@ -245,7 +263,7 @@ class SpalartAllmarasSolver:
         M = self.M
         if local_timestep:
             h = self.mesh.nodal_size("max")           # streamwise (convective) cell scale
-            umag = np.maximum(np.hypot(self.u, self.v), 1e-3)
+            umag = np.maximum(np.linalg.norm(self.vel, axis=0), 1e-3)
             M = self.pattern.matrix(self.M.data * (umag / h)[self.pattern.rows])
         return pseudo_transient(self.residual_jacobian, nt, fixed, M, method, rtol, atol,
                                 dtau0, max_steps, inner_newton=inner_newton, verbose=verbose)

@@ -1,11 +1,13 @@
-"""Threaded (numba) element kernel of the Spalart-Allmaras equation.
+"""Threaded (numba) element kernel of the Spalart-Allmaras equation (2-D and 3-D).
 
 Reproduces ``SpalartAllmarasSolver._local_numpy`` (residual ``(ne, n)`` and
 Jacobian ``(ne, n, n)`` per element): Galerkin convection, diffusion and
 source, SUPG on convection and source, source and diffusivity derivatives
 by the same central finite differences at the quadrature points.  The model
 functions are scalar ``@njit`` translations of :class:`SpalartAllmaras`;
-its constants travel as a float array (see :func:`constants`).
+its constants travel as a float array (see :func:`constants`).  Gradients
+are passed stacked over the ``d`` directions (``dphi (d, ne, nq, n)``) and
+the velocity as ``(d, ne, n)``.
 """
 
 from __future__ import annotations
@@ -36,14 +38,14 @@ def _diffusivity(nt, c):
 
 
 @njit(cache=True, nogil=True)
-def _source(nt, gx, gy, omega, d, c):
+def _source(nt, grad2, omega, d, c):
+    """Source at a point from ``nu_tilde``, ``|grad nu_tilde|^2``, ``|omega|`` and ``d``."""
     if d < 1e-12:
         d = 1e-12
     nu = c[NU]
     chi = nt / nu
     chi3 = chi * chi * chi
     fv1 = chi3 / (chi3 + c[CV1] ** 3)
-    grad2 = gx * gx + gy * gy
     kappa2 = c[KAPPA] * c[KAPPA]
     d2 = d * d
     # modified vorticity with the SA-neg guard
@@ -76,34 +78,50 @@ def _source(nt, gx, gy, omega, d, c):
     return s + c[CB2] / c[SIGMA] * grad2
 
 
+@njit(cache=True, nogil=True)
+def _grad2(g, d):
+    s = 0.0
+    for k in range(d):
+        s += g[k] * g[k]
+    return s
+
+
 @njit(parallel=True, cache=True, nogil=True)
-def sa_kernel(phi, dphi_dx, dphi_dy, psi, wh, gxx, gxy, gyy, nte, ue, ve, de, c,
-              supg, metric, R_e, J_e):
-    ne, nq, n = dphi_dx.shape
+def sa_kernel(phi, dphi, psi, wh, G, nte, ue, de, c, supg, metric, R_e, J_e):
+    d, ne, nq, n = dphi.shape
     nc = psi.shape[1]
     fd = c[FD_STEP]
     for e in prange(ne):
         ugrad = np.empty(n)
         grad_i = np.empty(n)
         dS = np.empty(n)
+        g = np.empty(d)
+        gp = np.empty(d)
+        uq = np.empty(d)
+        s_g = np.empty(d)
+        vgrad = np.empty((d, d))                 # vgrad[c, k] = d u_c / d x_k
         for q in range(nq):
             w = wh[e, q]
             ntq = 0.0
-            gx = 0.0
-            gy = 0.0
-            uq = 0.0
-            vq = 0.0
-            dudy = 0.0
-            dvdx = 0.0
+            for k in range(d):
+                g[k] = 0.0
+                uq[k] = 0.0
+                for m in range(d):
+                    vgrad[k, m] = 0.0
             for i in range(n):
                 ntq += phi[q, i] * nte[e, i]
-                gx += dphi_dx[e, q, i] * nte[e, i]
-                gy += dphi_dy[e, q, i] * nte[e, i]
-                uq += phi[q, i] * ue[e, i]
-                vq += phi[q, i] * ve[e, i]
-                dudy += dphi_dy[e, q, i] * ue[e, i]
-                dvdx += dphi_dx[e, q, i] * ve[e, i]
-            omega = abs(dvdx - dudy)
+                for k in range(d):
+                    g[k] += dphi[k, e, q, i] * nte[e, i]
+                    uq[k] += phi[q, i] * ue[k, e, i]
+                    for m in range(d):
+                        vgrad[k, m] += dphi[m, e, q, i] * ue[k, e, i]
+            if d == 2:
+                omega = abs(vgrad[1, 0] - vgrad[0, 1])
+            else:
+                cx = vgrad[2, 1] - vgrad[1, 2]
+                cy = vgrad[0, 2] - vgrad[2, 0]
+                cz = vgrad[1, 0] - vgrad[0, 1]
+                omega = np.sqrt(cx * cx + cy * cy + cz * cz)
             dq = 0.0
             for k in range(nc):
                 dq += psi[q, k] * de[e, k]
@@ -113,36 +131,59 @@ def sa_kernel(phi, dphi_dx, dphi_dy, psi, wh, gxx, gxy, gyy, nte, ue, ve, de, c,
             D = _diffusivity(ntq, c)
             h_n = fd * (c[NU] + abs(ntq))
             dD = (_diffusivity(ntq + h_n, c) - _diffusivity(ntq - h_n, c)) / (2.0 * h_n)
-            s = _source(ntq, gx, gy, omega, dq, c)
-            s_n = (_source(ntq + h_n, gx, gy, omega, dq, c)
-                   - _source(ntq - h_n, gx, gy, omega, dq, c)) / (2.0 * h_n)
-            h_g = fd * (1.0 + abs(gx) + abs(gy))
-            s_gx = (_source(ntq, gx + h_g, gy, omega, dq, c)
-                    - _source(ntq, gx - h_g, gy, omega, dq, c)) / (2.0 * h_g)
-            s_gy = (_source(ntq, gx, gy + h_g, omega, dq, c)
-                    - _source(ntq, gx, gy - h_g, omega, dq, c)) / (2.0 * h_g)
-            conv = uq * gx + vq * gy
+            grad2 = _grad2(g, d)
+            s = _source(ntq, grad2, omega, dq, c)
+            s_n = (_source(ntq + h_n, grad2, omega, dq, c)
+                   - _source(ntq - h_n, grad2, omega, dq, c)) / (2.0 * h_n)
+            h_g = fd
+            for k in range(d):
+                h_g += fd * abs(g[k])
+            for k in range(d):
+                for m in range(d):
+                    gp[m] = g[m]
+                gp[k] = g[k] + h_g
+                plus = _source(ntq, _grad2(gp, d), omega, dq, c)
+                gp[k] = g[k] - h_g
+                minus = _source(ntq, _grad2(gp, d), omega, dq, c)
+                s_g[k] = (plus - minus) / (2.0 * h_g)
+            conv = 0.0
+            for k in range(d):
+                conv += uq[k] * g[k]
             for i in range(n):
-                ugrad[i] = uq * dphi_dx[e, q, i] + vq * dphi_dy[e, q, i]
-                grad_i[i] = dphi_dx[e, q, i] * gx + dphi_dy[e, q, i] * gy
-                dS[i] = s_n * phi[q, i] + s_gx * dphi_dx[e, q, i] + s_gy * dphi_dy[e, q, i]
+                a = 0.0
+                b = 0.0
+                cdS = s_n * phi[q, i]
+                for k in range(d):
+                    a += uq[k] * dphi[k, e, q, i]
+                    b += dphi[k, e, q, i] * g[k]
+                    cdS += s_g[k] * dphi[k, e, q, i]
+                ugrad[i] = a
+                grad_i[i] = b
+                dS[i] = cdS
             tau = 0.0
             if supg:
                 if metric:
-                    q2 = gxx[e, q] * uq * uq + 2.0 * gxy[e, q] * uq * vq + gyy[e, q] * vq * vq
-                    gg = gxx[e, q] ** 2 + 2.0 * gxy[e, q] ** 2 + gyy[e, q] ** 2
+                    q2 = 0.0
+                    gg = 0.0
+                    for a_ in range(d):
+                        for b_ in range(d):
+                            q2 += uq[a_] * G[e, q, a_, b_] * uq[b_]
+                            gg += G[e, q, a_, b_] * G[e, q, a_, b_]
                     tau = 1.0 / np.sqrt(q2 + 0.5 * D * D * gg)
                 else:
-                    umag = np.hypot(uq, vq)
-                    if umag > 0.0:
-                        sx = uq / umag
-                        sy = vq / umag
-                    else:
-                        sx = 1.0
-                        sy = 0.0
+                    umag2 = 0.0
+                    for k in range(d):
+                        umag2 += uq[k] * uq[k]
+                    umag = np.sqrt(umag2)
                     ssum = 0.0
                     for i in range(n):
-                        ssum += abs(sx * dphi_dx[e, q, i] + sy * dphi_dy[e, q, i])
+                        sg = 0.0
+                        if umag > 0.0:
+                            for k in range(d):
+                                sg += uq[k] / umag * dphi[k, e, q, i]
+                        else:
+                            sg = dphi[0, e, q, i]
+                        ssum += abs(sg)
                     if ssum < 1e-300:
                         ssum = 1e-300
                     h = 2.0 / ssum
@@ -151,20 +192,26 @@ def sa_kernel(phi, dphi_dx, dphi_dy, psi, wh, gxx, gxy, gyy, nte, ue, ve, de, c,
                 wi = phi[q, i] + tau * ugrad[i]          # Galerkin + SUPG test function
                 R_e[e, i] += w * ((conv - s) * wi + D * grad_i[i])
                 for j in range(n):
-                    J_e[e, i, j] += w * (wi * (ugrad[j] - dS[j])
-                                         + D * (dphi_dx[e, q, i] * dphi_dx[e, q, j]
-                                                + dphi_dy[e, q, i] * dphi_dy[e, q, j])
+                    diff = 0.0
+                    for k in range(d):
+                        diff += dphi[k, e, q, i] * dphi[k, e, q, j]
+                    J_e[e, i, j] += w * (wi * (ugrad[j] - dS[j]) + D * diff
                                          + dD * grad_i[i] * phi[q, j])
 
 
-def sa_local(b, nt, u, v, distance, c, supg, metric):
-    """Element residual ``(ne, n)`` and Jacobian ``(ne, n, n)`` with the numba kernel."""
+def sa_local(b, nt, vel, distance, c, supg, metric):
+    """Element residual ``(ne, n)`` and Jacobian ``(ne, n, n)`` with the numba kernel;
+    ``vel`` is the ``(d, N)`` nodal velocity."""
     ne, n = b.conn.shape
     R_e = np.zeros((ne, n))
     J_e = np.zeros((ne, n, n))
-    gxx, gxy, gyy = b.G
-    sa_kernel(b.phi, b.dphi_dx, b.dphi_dy, b.psi, b.wh, gxx, gxy, gyy,
-              np.ascontiguousarray(nt[b.conn]), np.ascontiguousarray(u[b.conn]),
-              np.ascontiguousarray(v[b.conn]), np.ascontiguousarray(distance[b.pconn]), c,
-              bool(supg), bool(metric), R_e, J_e)
+    cache = b.__dict__.get("_numba_stacked")
+    if cache is None:
+        cache = (np.ascontiguousarray(np.stack(b.dphi)), np.ascontiguousarray(np.stack(b.dpsi)),
+                 np.ascontiguousarray(b.Gmat))
+        b.__dict__["_numba_stacked"] = cache
+    dphi, _, G = cache
+    sa_kernel(b.phi, dphi, b.psi, b.wh, G, np.ascontiguousarray(nt[b.conn]),
+              np.ascontiguousarray(np.asarray(vel)[:, b.conn]),
+              np.ascontiguousarray(distance[b.pconn]), c, bool(supg), bool(metric), R_e, J_e)
     return R_e, J_e

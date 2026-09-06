@@ -61,8 +61,11 @@ edges and the linear pressure element). `TaylorHoodSpace` numbers the unknowns
 element-local arrays use the same order (L = d n + nc), and `_Block` holds the
 quadrature data of one cell type with `dphi`/`dpsi` as tuples of `d` gradient
 arrays and `Gmat` the `d x d` metric. User callables take `(x, y[, z][, t])`
-(`core/util.call_coeff_nd`); boundary specs have `d` components. Still 2D only:
-`transport/` (the heat code), `core/wall_distance.py`, `turbulence/`.
+(`core/util.call_coeff_nd`); boundary specs have `d` components. The
+turbulence model, wall distance and RANS coupling also take `d` from the mesh
+(`Mesh.extrude` turns a quad9 mesh into one layer of hexahedra for 2D/3D
+consistency tests). Still 2D only: `transport/` (the heat code) and the
+committed boundary-layer meshes.
 
 **Fixed sparsity pattern.** `FlowAssembler` builds one `SparsityPattern`
 (`backends/pattern.py`) per space; every matrix (K, M, B, B^T, the Jacobian

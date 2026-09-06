@@ -36,9 +36,9 @@ class RANSSolution:
         from aa540fem.io.mesh_files import write_vtk
 
         f = self.flow
-        vel = np.column_stack([f.u, f.v, np.zeros(f.space.N)])
         return write_vtk(path, self.mesh, point_data={
-            "velocity": vel, "speed": f.speed, "p": f.p_nodal, "nu_tilde": self.nu_tilde,
+            "velocity": f.velocity_3d(), "speed": f.speed, "p": f.p_nodal,
+            "nu_tilde": self.nu_tilde,
             "nu_t_ratio": self.nu_t / self.model.nu, "wall_distance": self.distance})
 
 
@@ -68,7 +68,7 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                   starting the wall-resolved high-Reynolds-number case from
                   rest.  The last factor must be 1.
     U0          : initial state for the first flow solve (a dof vector or a
-                  callable ``(x, y) -> (ux, uy)``); a smooth boundary-layer
+                  callable ``(x, y[, z]) -> (ux, uy[, uz])``); a smooth boundary-layer
                   profile is a much better start than uniform flow on
                   wall-resolved meshes.
     flow_options : extra keyword arguments for :func:`solve_flow`
@@ -143,7 +143,7 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
     history = []
     converged = False
     for k in range(1, max_outer + 1):
-        sa.set_velocity(flow.u, flow.v)
+        sa.set_velocity(*flow.velocity)
         res = sa.solve(nt, fixed_nodes, fixed_vals, rtol=1e-4, verbose=inner)
         nt_new = res.T
         nt = relax * nt_new + (1.0 - relax) * nt

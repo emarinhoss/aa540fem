@@ -234,8 +234,10 @@ solution to 1e-14, and the tests (`tests/test_flow3d.py`,
 without stabilisation, the stabilised Jacobian against finite differences,
 the theta and RK45 integrators, the fieldsplit solver and the MPI
 domain decomposition in 3-D.  Tetrahedra use a conical-product Gauss-Jacobi
-rule (27 points for the P2/P1 pair); the boundary layer meshes and the
-turbulence model are still 2-D.
+rule (27 points for the P2/P1 pair).  The Spalart-Allmaras model and the
+RANS coupling also run in 3-D (`|curl u|`, wall distance to faces,
+`Mesh.extrude` for 2-D/3-D consistency tests, see `docs/turbulence.md`
+section 3.8); the committed boundary-layer meshes are still 2-D.
 
 **Schaefer-Turek 3D-1Z** (`examples/cylinder3d.py`: cylinder of diameter
 0.1 along z in the 2.5 x 0.41 x 0.41 channel, Re 20 on the mean inflow
