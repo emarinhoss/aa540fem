@@ -90,6 +90,37 @@ def physical_laplacian(inverse, d_xixi, d_xieta, d_etaeta):
             + c[:, :, None] * d_etaeta[None])
 
 
+def element_metric(inverse, family):
+    """Element metric tensor ``G = J^-T T J^-1`` at the quadrature points.
+
+    ``inverse`` is ``(dxi_dx, dxi_dy, deta_dx, deta_dy)`` from :func:`jacobian`.
+    ``G`` measures lengths in units of the reference element: for a
+    quadrilateral (reference ``[-1, 1]^2``) ``s . G s = (2 / h_s)^2`` with
+    ``h_s`` the cell size in the unit direction ``s``, so a rectangle
+    ``hx x hy`` gives ``G = diag(4/hx^2, 4/hy^2)``.  For triangles the
+    constant ``T = 4 [[1, 1/2], [1/2, 1]]`` refers the metric to an
+    equilateral reference triangle, so that ``G`` does not depend on which
+    vertex carries the origin of the natural coordinates (an equilateral
+    triangle of side ``h`` gives ``G = (4/h^2) I``, a right isosceles one
+    the lengths of its legs along the legs).  Returns ``(Gxx, Gxy, Gyy)``,
+    each ``(n_elems, nq)``.  Used by the metric form of the stabilisation
+    parameters (Shakib 1991, Bazilevs et al. 2007), which is smooth in the
+    velocity, unlike the flow-direction length of :func:`supg_length`.
+    """
+    dxi_dx, dxi_dy, deta_dx, deta_dy = inverse
+    if family == "triangle":
+        t11 = t22 = 4.0
+        t12 = 2.0
+    else:
+        t11 = t22 = 1.0
+        t12 = 0.0
+    gxx = t11 * dxi_dx ** 2 + 2.0 * t12 * dxi_dx * deta_dx + t22 * deta_dx ** 2
+    gxy = (t11 * dxi_dx * dxi_dy + t12 * (dxi_dx * deta_dy + dxi_dy * deta_dx)
+           + t22 * deta_dx * deta_dy)
+    gyy = t11 * dxi_dy ** 2 + 2.0 * t12 * dxi_dy * deta_dy + t22 * deta_dy ** 2
+    return gxx, gxy, gyy
+
+
 def supg_length(sx, sy, dphi_dx, dphi_dy):
     """Element length in the direction ``s = (sx, sy)`` (unit vectors, ``(n_elems, nq)``):
     ``h = 2 / sum_i |s . grad phi_i|`` (Tezduyar)."""

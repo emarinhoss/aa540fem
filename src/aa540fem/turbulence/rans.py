@@ -116,7 +116,8 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
     nt_inf = 3.0 * nu if nu_tilde_inf is None else nu_tilde_inf
     force_tag = force_tag or wall_tags[0]
 
-    sa = SpalartAllmarasSolver(mesh, model, wall_tags, order=problem.order)
+    sa = SpalartAllmarasSolver(mesh, model, wall_tags, order=problem.order,
+                               element_length=problem.element_length)
     fixed = {}
     for tag, spec in problem.bc.items():
         if spec == OPEN or tag in wall_tags or any(v is None for v in spec):

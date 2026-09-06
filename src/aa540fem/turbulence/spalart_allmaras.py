@@ -114,9 +114,11 @@ class SpalartAllmaras:
 class SpalartAllmarasSolver:
     """Steady SA equation on the velocity mesh for a frozen velocity field."""
 
-    def __init__(self, mesh, model: SpalartAllmaras, wall_tags, order=None):
+    def __init__(self, mesh, model: SpalartAllmaras, wall_tags, order=None,
+                 element_length: str = "streamline"):
         self.mesh = mesh
         self.model = model
+        self.element_length = element_length      # SUPG cell measure, as in FlowProblem
         self.N = mesh.n_nodes
         self.blocks = [_Block(mesh, name, conn, order) for name, conn in mesh.cells.items()]
         self.distance = mesh.wall_distance(wall_tags)
@@ -161,7 +163,11 @@ class SpalartAllmarasSolver:
             uq, vq = ue @ b.phi.T, ve @ b.phi.T
             omega = np.abs(np.einsum("eqi,ei->eq", b.dphi_dx, ve)
                            - np.einsum("eqi,ei->eq", b.dphi_dy, ue))
-            dq = np.maximum(self.distance[conn] @ b.phi.T, 1e-12)
+            # distance from the corner nodes with the linear shape functions: a
+            # convex combination, so it stays between the nodal values (the
+            # quadratic interpolant undershoots to negative values in the
+            # distorted cells around the ends of a wall)
+            dq = np.maximum(self.distance[b.pconn] @ b.psi.T, 1e-12)
             wh = b.wh
 
             # diffusivity and its derivative
@@ -191,13 +197,19 @@ class SpalartAllmarasSolver:
                   + np.einsum("eq,eqi,eqj->eij", wh * D, b.dphi_dy, b.dphi_dy)
                   + np.einsum("eq,eqi,qj->eij", wh * dD, grad_i, b.phi))
             if supg:
-                umag = np.hypot(uq, vq)
-                moving = umag > 0
-                safe = np.where(moving, umag, 1.0)
-                sx = np.where(moving, uq / safe, 1.0)
-                sy = np.where(moving, vq / safe, 0.0)
-                h = supg_length(sx, sy, b.dphi_dx, b.dphi_dy)
-                tau = 1.0 / np.sqrt((2.0 * umag / h) ** 2 + (4.0 * D / h ** 2) ** 2)
+                if self.element_length == "metric":
+                    gxx, gxy, gyy = b.G
+                    q2 = gxx * uq * uq + 2.0 * gxy * uq * vq + gyy * vq * vq   # u . G u
+                    gg = gxx ** 2 + 2.0 * gxy ** 2 + gyy ** 2                  # G : G
+                    tau = 1.0 / np.sqrt(q2 + 0.5 * D ** 2 * gg)
+                else:
+                    umag = np.hypot(uq, vq)
+                    moving = umag > 0
+                    safe = np.where(moving, umag, 1.0)
+                    sx = np.where(moving, uq / safe, 1.0)
+                    sy = np.where(moving, vq / safe, 0.0)
+                    h = supg_length(sx, sy, b.dphi_dx, b.dphi_dy)
+                    tau = 1.0 / np.sqrt((2.0 * umag / h) ** 2 + (4.0 * D / h ** 2) ** 2)
                 w_i = tau[:, :, None] * ugrad
                 Re_ = Re_ + np.einsum("eq,eqi->ei", wh * (conv - s), w_i)
                 Je = Je + np.einsum("eq,eqi,eqj->eij", wh, w_i, ugrad - dS)

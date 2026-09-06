@@ -122,3 +122,33 @@ def test_physical_laplacian_exact_on_affine_elements(name):
     lap = physical_laplacian(inverse, *el.hessian(xi, eta))
     T = 3 * mesh.x ** 2 - mesh.y ** 2 + mesh.x * mesh.y       # Laplacian = 6 - 2 = 4
     assert np.allclose(np.einsum("eqi,ei->eq", lap, T[mesh.conn]), 4.0)
+
+
+def test_element_metric_measures_cell_sizes():
+    from aa540fem.transport.element import element_metric, jacobian
+
+    def metric(name, x, y):
+        el = get_element(name)
+        xi, eta, _ = el.quadrature(el.full_order)
+        _, dxi, deta = el.shape(xi, eta)
+        _, *inverse = jacobian(np.array([x], float), np.array([y], float), dxi, deta)
+        return [g[0] for g in element_metric(inverse, el.family)]
+
+    def length(g, s):
+        gxx, gxy, gyy = g
+        return 2.0 / np.sqrt(gxx * s[0] ** 2 + 2 * gxy * s[0] * s[1] + gyy * s[1] ** 2)
+
+    # 2 x 0.5 rectangle: the cell sizes along the axes, an ellipse in between
+    g = metric("quad9", [0, 2, 2, 0, 1, 2, 1, 0, 1], [0, 0, .5, .5, 0, .25, .5, .25, .25])
+    assert np.allclose(length(g, (1, 0)), 2.0) and np.allclose(length(g, (0, 1)), 0.5)
+    s = (np.cos(0.3), np.sin(0.3))
+    assert np.allclose(length(g, s), 1 / np.sqrt(s[0] ** 2 / 4 + s[1] ** 2 / 0.25))
+    # equilateral triangle of side 1: isotropic, independent of the direction
+    r3 = np.sqrt(3)
+    g = metric("triangle6", [0, 1, .5, .5, .75, .25], [0, 0, r3 / 2, 0, r3 / 4, r3 / 4])
+    for angle in np.linspace(0, np.pi, 7):
+        assert np.allclose(length(g, (np.cos(angle), np.sin(angle))), 1.0)
+    # right isosceles triangle: its legs along the legs
+    g = metric("triangle6", [0, 1, 0, .5, .5, 0], [0, 0, 1, 0, .5, .5])
+    assert np.allclose(length(g, (1, 0)), 1.0) and np.allclose(length(g, (0, 1)), 1.0)
+

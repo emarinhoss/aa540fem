@@ -21,7 +21,13 @@
      terms, which need the strong momentum residual at the quadrature
      points: the Laplacian of the discrete velocity comes from the
      shape-function Hessians (`core/shape_functions.py`, mapped in
-     `transport/element.physical_laplacian`).
+     `transport/element.physical_laplacian`), and the stabilisation
+     parameters measure the cell with the element metric tensor
+     (`transport/element.element_metric`, stored per quadrature block),
+     which keeps them smooth in the velocity on stretched cells;
+   - `turbulence/spalart_allmaras.py` assembles the one-equation model on
+     the same quadrature blocks and `turbulence/rans.py` couples it to the
+     flow solver.
    Element matrices are scattered into global COO/CSR matrices with the
    connectivity; the `TaylorHoodSpace` maps nodes to `[u_x, u_y, p]` dofs.
 4. **Boundary conditions**: Neumann fluxes are edge integrals added to the

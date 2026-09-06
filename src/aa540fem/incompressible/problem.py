@@ -10,6 +10,7 @@ from aa540fem.core.util import accepts_time, call_coeff
 
 OPEN = "open"
 SCHEMES = ("rk45", "theta")
+ELEMENT_LENGTHS = ("streamline", "metric")
 
 
 @dataclass
@@ -47,6 +48,15 @@ class FlowProblem:
                   then use ``mu + mu_t(x)`` with the extra term
                   ``- grad(u)^T . grad(mu_t)`` of the variable-viscosity
                   stress divergence.
+    element_length : how the stabilisation parameters measure the cell:
+                  ``"metric"`` (default) uses the element metric tensor ``G``
+                  (``tau = [(2/dt)^2 + u.G u + nu^2 G:G / 2]^(-1/2)``), which
+                  is smooth in the velocity and lets Newton converge on
+                  strongly stretched boundary-layer cells; ``"streamline"``
+                  uses Tezduyar's element length in the flow direction,
+                  ``h = 2 / sum_i |s . grad phi_i|``, which jumps between the
+                  cell length and its height with the slightest rotation of
+                  the velocity on such cells and stalls Newton there.
     """
 
     mesh: Mesh
@@ -61,8 +71,12 @@ class FlowProblem:
     grad_div: bool = True
     pspg: bool = False
     eddy_viscosity: object = None
+    element_length: str = "metric"
 
     def validate(self):
+        if self.element_length not in ELEMENT_LENGTHS:
+            raise ValueError(f"element_length must be one of {ELEMENT_LENGTHS}, "
+                             f"got {self.element_length!r}")
         for name in self.mesh.cells:
             if name not in PRESSURE_ELEMENT:
                 raise ValueError(f"Taylor-Hood needs quadratic elements; got {name!r} "

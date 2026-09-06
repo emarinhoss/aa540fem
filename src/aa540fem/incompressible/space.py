@@ -6,7 +6,7 @@ import numpy as np
 
 from aa540fem.core.elements import PRESSURE_ELEMENT, get_element
 from aa540fem.core.mesh import Mesh
-from aa540fem.transport.element import jacobian, map_gradients, physical_laplacian
+from aa540fem.transport.element import element_metric, jacobian, map_gradients, physical_laplacian
 
 
 class TaylorHoodSpace:
@@ -69,6 +69,7 @@ class _Block:
         self.dphi_dx, self.dphi_dy = map_gradients(inverse, dxi, deta)
         self.dpsi_dx, self.dpsi_dy = map_gradients(inverse, dpsi_dxi, dpsi_deta)
         self.lap_phi = physical_laplacian(inverse, *self.el.hessian(xi, eta))
+        self.G = element_metric(inverse, self.el.family)          # (Gxx, Gxy, Gyy)
         self.wh = w[None, :] * hs
         self.X = xe @ self.phi.T
         self.Y = ye @ self.phi.T

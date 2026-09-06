@@ -21,10 +21,12 @@ def poiseuille(elem_type, **kw):
 
 @pytest.mark.parametrize("elem_type", ["quad9", "triangle6"])
 @pytest.mark.parametrize("pspg", [False, True])
-def test_stabilised_poiseuille_stays_exact(elem_type, pspg):
+@pytest.mark.parametrize("element_length", ["streamline", "metric"])
+def test_stabilised_poiseuille_stays_exact(elem_type, pspg, element_length):
     # residual consistency: the exact solution has zero strong residual
     # (including the viscous term, which needs the shape-function Hessians)
-    p, inflow = poiseuille(elem_type, stabilisation=True, pspg=pspg)
+    p, inflow = poiseuille(elem_type, stabilisation=True, pspg=pspg,
+                           element_length=element_length)
     sol = solve_flow(p)
     m = sol.mesh
     assert sol.info["converged"] and sol.info["stabilisation"]
@@ -58,13 +60,16 @@ def test_jacobian_matches_finite_differences_with_frozen_parameters():
         assert mt.J_S.nnz > 0 and np.abs(mt.S).max() > 0
 
 
-def test_full_jacobian_with_parameter_derivatives_on_smooth_field():
-    # tau, gamma and the flow-direction element length are differentiated; on a
-    # smooth field (no kinks of |s . grad phi|) the Jacobian is consistent
+@pytest.mark.parametrize("element_length", ["streamline", "metric"])
+def test_full_jacobian_with_parameter_derivatives_on_smooth_field(element_length):
+    # tau, gamma and the element length are differentiated; on a smooth field
+    # (no kinks of |s . grad phi| for the streamline length) the Jacobian is
+    # consistent for both cell measures
     mesh = geometry(2.0, 1.0, 6, "quad9")
     inflow = lambda x, y: 4 * y * (1 - y)
     for mu, pspg in ((1e-2, False), (1e-4, False), (1e-4, True)):
         prob = FlowProblem(mesh, mu=mu, rho=1.0, stabilisation=True, pspg=pspg,
+                           element_length=element_length,
                            bc={"left": (inflow, 0.0), "top": (0.0, 0.0), "bottom": (0.0, 0.0),
                                "right": "open"})
         asm = FlowAssembler(prob)

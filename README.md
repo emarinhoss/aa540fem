@@ -220,16 +220,22 @@ cf = 2 * tr["tx"] / (rho * U**2)              # skin friction distribution
 term through the shape-function Hessians, so it is consistent: Poiseuille
 flow stays exact to round-off) and grad-div stabilisation; `pspg=True` adds
 pressure stabilisation, which Taylor-Hood does not need.  It is off by
-default.  The Jacobian is consistent, including the derivatives of the
-stabilisation parameters and of the flow-direction element length (a
-finite-difference check to 1e-9 is in the tests), which matters on
-stretched boundary-layer cells.
+default.  The parameters use the element metric tensor
+(`tau = [(2/dt)^2 + u.G u + nu^2 G:G/2]^(-1/2)`, Shakib 1991 / Bazilevs et
+al. 2007), which is smooth in the velocity; Tezduyar's flow-direction
+element length is available as `element_length="streamline"`, but on
+strongly stretched boundary-layer cells it jumps between the cell length
+and its height with the slightest rotation of the velocity and stalls
+Newton.  The Jacobian is consistent, including the derivatives of the
+stabilisation parameters (a finite-difference check to 1e-9 is in the
+tests).
 `continuation="ptc"` (or the `"auto"` fallback, which restarts from the
 best Newton iterate) solves backward-Euler pseudo-time steps with a few
 Newton iterations each and grows the step by switched evolution
 relaxation; the step is local (scaled by the cell time scale, so `dtau0`
-is a CFL number).  It is what makes the laminar flat plate at Re 1e5
-converge from rest, where plain Newton diverges.  Boundary-layer
+is a CFL number) and starts from the divergence-free projection of the
+initial velocity.  It is what makes the laminar flat plate at Re 1e5
+converge from rest (10 pseudo-time steps), where plain Newton diverges.  Boundary-layer
 meshes (quadrilaterals extruded from the wall inside a triangular mesh)
 come from `make_meshes.make_flat_plate()` and the `boundary_layer=` option
 of `make_meshes.make()`.
@@ -334,10 +340,10 @@ Schaefer-Turek cylinder benchmark at Re = 20:
 mesh `cylinder_bl.msh` with stabilisation the same case gives
 C_D = 5.5795, C_L = 0.0106, both on the reference).  The laminar flat plate
 at Re_L = 1e5 (`examples/flat_plate.py`, stabilised, pseudo-transient
-continuation, 26 s) gives a skin friction within 4 % of Blasius for
-1e4 < Re_x < 1e5 (mean 2.8 %) and velocity profiles within 0.015 of the
-similarity solution at three stations; near the leading edge the
-Navier-Stokes skin friction exceeds Blasius, as it should.  The cylinder at
+continuation from rest in 10 steps, 30 s) gives a skin friction within 5 %
+of Blasius for 1e4 < Re_x < 1e5 (mean 2.7 %) and velocity profiles within
+0.014 of the similarity solution at three stations; near the leading edge
+the Navier-Stokes skin friction exceeds Blasius, as it should.  The cylinder at
 Re = 100 (`examples/cylinder_shedding.py`, stabilised Crank-Nicolson,
 dt = 0.005, one hour) sheds vortices with
 

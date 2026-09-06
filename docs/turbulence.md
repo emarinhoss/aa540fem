@@ -113,9 +113,13 @@ as a straight segment (exact on straight walls; the error on a curved wall
 is the sagitta of a half edge, checked on the annulus in the tests).  The
 computation is a vectorised point-segment distance in chunks of nodes; for
 the meshes here it takes well under a second.  At the quadrature points
-the distance is interpolated with the element shape functions and floored
-at 1e-12 (it only appears as `(nu_tilde / d)^2`, and `nu_tilde = 0` on the
-wall nodes).
+the distance is interpolated from the corner nodes with the linear shape
+functions, a convex combination that stays between the nodal values: the
+quadratic interpolant undershoots to negative values in the distorted cells
+around the ends of a wall, and since the distance enters as
+`(nu_tilde / d)^2` that produced destruction terms of 1e11 at the start of
+the plate case.  (The floor of 1e-12 remains as a guard; `nu_tilde = 0` on
+the wall nodes.)
 
 ### 3.3 Discretisation of the SA equation
 
@@ -135,10 +139,12 @@ interpolated `nu_tilde`, its gradient, the vorticity of the velocity field
 (from the velocity gradients) and the wall distance.  The equation is
 convection dominated everywhere except in the near-wall region, so the
 convective term is stabilised with the same streamline-upwind
-Petrov-Galerkin weighting and element length used for the momentum
-equations (`tau = [(2|u|/h)^2 + (4 D/h^2)^2]^(-1/2)`, `h = 2 / sum |s . grad phi|`
-in the flow direction [6]); the diffusion part of the strong residual is
-omitted in the SUPG term, the usual simplification.
+Petrov-Galerkin weighting and cell measure used for the momentum equations:
+`tau = [u . G u + D^2 G:G / 2]^(-1/2)` with the element metric tensor `G`
+(section 3.4; `u . G u = (2|u|/h_s)^2` for the cell size `h_s` in the flow
+direction, `D^2 G:G / 2 = (4 D / h^2)^2` on a square cell and the smallest
+cell dimension on a stretched one [6, 9, 10]); the diffusion part of the
+strong residual is omitted in the SUPG term, the usual simplification.
 
 ### 3.4 Newton linearisation
 
@@ -151,11 +157,33 @@ extra vectorised evaluations per assembly.  With SUPG off the Jacobian
 matches a finite-difference directional derivative to 1e-8 (test); with
 SUPG on the stabilisation parameter of the turbulence equation is frozen,
 which leaves a small inconsistency that slows Newton but does not change
-the converged solution.  (The momentum equations differentiate their
-stabilisation parameters, including the flow-direction dependence of the
-element length, which turned out to be essential on stretched
-boundary-layer cells: there a slight rotation of the velocity collapses
-the streamline length from the cell length to its height.)
+the converged solution.
+
+The momentum equations do differentiate their stabilisation parameters,
+and the way the cell size enters them decided whether the wall-resolved
+plate could be solved at all.  Tezduyar's flow-direction element length
+`h = 2 / sum_i |s . grad phi_i|`, `s = u/|u|` [6], is the natural choice on
+isotropic meshes, but on a boundary-layer cell of aspect ratio 1000 it
+jumps from the cell length to the cell height when the velocity rotates by
+a milliradian, and its derivative changes sign at every such rotation; the
+Newton direction then stops being a descent direction long before the
+residual is small, and the pseudo-transient continuation crawls at one per
+cent per step.  The element metric tensor `G = J^-T T J^-1` (Shakib [9],
+Bazilevs et al. [10]; `J` the Jacobian of the isoparametric map, `T` a
+constant that refers triangles to an equilateral reference element) gives
+the smooth alternative
+
+    tau   = [ (2/dt)^2 + u . G u + nu^2 G:G / 2 ]^(-1/2)
+    gamma = (h_s |u| / 2) min(1, Re_h / 3),   h_s |u| / 2 = |u|^2 / sqrt(u . G u)
+
+with the same limits as before (`u . G u = (2|u|/h_s)^2`; the viscous term
+equals `(4 nu/h^2)^2` on a square cell and uses the smallest cell dimension
+on a stretched one, as Tezduyar's `h_RGN` does in boundary layers).
+`FlowProblem(element_length="metric")` is the default; `"streamline"`
+keeps the previous definition.  On the plate mesh at Re 1e4 the first flow
+solve of the RANS start-up converges in 9 pseudo-time steps with the
+metric form (the step grows from 0.25 to 3e4 cell CFL numbers) where the
+streamline form was still at a residual of 2e-3 after 100 steps.
 
 ### 3.5 Steady solve: pseudo-transient continuation
 
@@ -221,6 +249,16 @@ offers three devices, all used by the validation case:
   and the thin wall cells and the coarse far field advance at their own
   pace; without it the global step is dictated by the wall cells and the
   far field never moves.
+
+The pseudo-transient continuation of the flow also projects its starting
+velocity onto the discretely divergence-free space (the saddle-point
+projection of the RK45 integrator, `steady.project_divergence_free`).  From
+a velocity that violates continuity, such as the impulsive start or a
+damped Newton iterate, the first pseudo-time step needs a pressure jump of
+order `1 / dtau` to enforce it, and the stabilisation terms, quadratic in
+velocity and pressure, turn that jump into a residual that does not shrink
+with the step: every step is rejected.  With the projection the laminar
+plate at Re 1e5 converges from rest in 10 pseudo-time steps.
 
 The sub-solves inside the outer iteration are converged only to a relative
 residual of 1e-5 (flow) and 1e-4 (turbulence): the outer iteration changes
@@ -290,3 +328,13 @@ added to this section once the validation run of the current revision completes)
 8. F. M. White, *Viscous Fluid Flow*, 3rd ed., McGraw-Hill, 2006 (chapter
    6: the turbulent flat-plate skin-friction correlations and the law of
    the wall).
+9. F. Shakib, T. J. R. Hughes and Z. Johan, "A new finite element
+   formulation for computational fluid dynamics: X. The compressible Euler
+   and Navier-Stokes equations", *Computer Methods in Applied Mechanics and
+   Engineering* 89 (1991) 141-219 (the element metric tensor in the
+   stabilisation parameter).
+10. Y. Bazilevs, V. M. Calo, J. A. Cottrell, T. J. R. Hughes, A. Reali and
+    G. Scovazzi, "Variational multiscale residual-based turbulence modeling
+    for large eddy simulation of incompressible flows", *Computer Methods in
+    Applied Mechanics and Engineering* 197 (2007) 173-201 (the metric form
+    `tau = [4/dt^2 + u.G u + C_I nu^2 G:G]^(-1/2)`).

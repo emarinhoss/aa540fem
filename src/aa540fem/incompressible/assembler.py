@@ -215,40 +215,15 @@ class FlowAssembler:
                     dR[c][c] = dR[c][c] + rho * phi / dt
             dpsi = (b.dpsi_dx, b.dpsi_dy)
 
-            # stabilisation parameters (Tezduyar), from the parameter state
+            # stabilisation parameters from the parameter state, with their
+            # derivatives with respect to the velocity components (used when the
+            # parameters follow the solution, i.e. no separate param_state)
             upq, vpq = u_par[b.conn] @ b.phi.T, v_par[b.conn] @ b.phi.T
-            umag = np.hypot(upq, vpq)
-            moving = umag > 0
-            safe = np.where(moving, umag, 1.0)
-            sx = np.where(moving, upq / safe, 1.0)
-            sy = np.where(moving, vpq / safe, 0.0)
-            sgrad = sx[:, :, None] * b.dphi_dx + sy[:, :, None] * b.dphi_dy
-            h = 2.0 / np.maximum(np.abs(sgrad).sum(axis=2), 1e-300)
             inv_dt2 = (2.0 / dt) ** 2 if dt is not None else 0.0
-            tau = 1.0 / np.sqrt(inv_dt2 + (2.0 * umag / h) ** 2 + (4.0 * nu / h ** 2) ** 2)
-            re_h = umag * h / (2.0 * nu)
-            low = re_h < 3.0
-            if prob.grad_div:
-                gamma = 0.5 * h * umag * np.minimum(1.0, re_h / 3.0)
-                dgamma_du = 0.5 * h * np.where(low, 2.0 * re_h / 3.0, 1.0)      # d gamma / d|u|
-                dgamma_dh = np.where(low, h * umag ** 2 / (6.0 * nu), 0.5 * umag)  # d gamma / dh
-            else:
-                gamma = dgamma_du = dgamma_dh = 0.0 * umag
-            dtau_du = -(4.0 / h ** 2) * umag * tau ** 3                            # d tau / d|u|
-            dtau_dh = tau ** 3 * (4.0 * umag ** 2 / h ** 3 + 32.0 * nu ** 2 / h ** 5)  # d tau / dh
-            # derivatives of the parameters with respect to the velocity components:
-            # through |u| and through the flow-direction dependence of the element
-            # length h(s), s = u/|u| (unless frozen at a separate state)
             follow = param_state is None
-            dir_ = (np.where(moving, upq / safe, 0.0), np.where(moving, vpq / safe, 0.0))
-            sgn = np.sign(sgrad)
-            dh_ds = (-0.5 * h ** 2 * np.einsum("eqi,eqi->eq", sgn, b.dphi_dx),
-                     -0.5 * h ** 2 * np.einsum("eqi,eqi->eq", sgn, b.dphi_dy))
-            inv_u = np.where(moving, 1.0 / safe, 0.0)
-            dh_du = ((dh_ds[0] * (1.0 - sx * sx) - dh_ds[1] * sy * sx) * inv_u,
-                     (-dh_ds[0] * sx * sy + dh_ds[1] * (1.0 - sy * sy)) * inv_u)
-            dtau_d = [dtau_du * dir_[d] + dtau_dh * dh_du[d] for d in range(2)]
-            dgamma_d = [dgamma_du * dir_[d] + dgamma_dh * dh_du[d] for d in range(2)]
+            parameters = (_metric_parameters if prob.element_length == "metric"
+                          else _streamline_parameters)
+            tau, gamma, dtau_d, dgamma_d = parameters(b, upq, vpq, nu, inv_dt2, prob.grad_div)
             dgrad = (b.dphi_dx, b.dphi_dy)
 
             if stab:
@@ -336,3 +311,82 @@ class FlowAssembler:
         else:
             J = A
         return R, J.tocsr()
+
+
+def _streamline_parameters(b, upq, vpq, nu, inv_dt2, grad_div):
+    """Tezduyar's ``tau`` and ``gamma`` with the flow-direction element length.
+
+    ``h = 2 / sum_i |s . grad phi_i|``, ``s = u / |u|``;
+    ``tau = [(2/dt)^2 + (2|u|/h)^2 + (4 nu/h^2)^2]^(-1/2)``;
+    ``gamma = h |u| / 2 min(1, Re_h / 3)``, ``Re_h = |u| h / (2 nu)``.
+    Returns ``tau, gamma`` and their derivatives with respect to the two
+    velocity components at the quadrature points (through ``|u|`` and through
+    ``h(s)``), each ``(n_elems, nq)``.
+    """
+    umag = np.hypot(upq, vpq)
+    moving = umag > 0
+    safe = np.where(moving, umag, 1.0)
+    sx = np.where(moving, upq / safe, 1.0)
+    sy = np.where(moving, vpq / safe, 0.0)
+    sgrad = sx[:, :, None] * b.dphi_dx + sy[:, :, None] * b.dphi_dy
+    h = 2.0 / np.maximum(np.abs(sgrad).sum(axis=2), 1e-300)
+    tau = 1.0 / np.sqrt(inv_dt2 + (2.0 * umag / h) ** 2 + (4.0 * nu / h ** 2) ** 2)
+    re_h = umag * h / (2.0 * nu)
+    low = re_h < 3.0
+    if grad_div:
+        gamma = 0.5 * h * umag * np.minimum(1.0, re_h / 3.0)
+        dgamma_du = 0.5 * h * np.where(low, 2.0 * re_h / 3.0, 1.0)      # d gamma / d|u|
+        dgamma_dh = np.where(low, h * umag ** 2 / (6.0 * nu), 0.5 * umag)  # d gamma / dh
+    else:
+        gamma = dgamma_du = dgamma_dh = 0.0 * umag
+    dtau_du = -(4.0 / h ** 2) * umag * tau ** 3                            # d tau / d|u|
+    dtau_dh = tau ** 3 * (4.0 * umag ** 2 / h ** 3 + 32.0 * nu ** 2 / h ** 5)  # d tau / dh
+    dir_ = (np.where(moving, upq / safe, 0.0), np.where(moving, vpq / safe, 0.0))
+    sgn = np.sign(sgrad)
+    dh_ds = (-0.5 * h ** 2 * np.einsum("eqi,eqi->eq", sgn, b.dphi_dx),
+             -0.5 * h ** 2 * np.einsum("eqi,eqi->eq", sgn, b.dphi_dy))
+    inv_u = np.where(moving, 1.0 / safe, 0.0)
+    dh_du = ((dh_ds[0] * (1.0 - sx * sx) - dh_ds[1] * sy * sx) * inv_u,
+             (-dh_ds[0] * sx * sy + dh_ds[1] * (1.0 - sy * sy)) * inv_u)
+    dtau_d = [dtau_du * dir_[d] + dtau_dh * dh_du[d] for d in range(2)]
+    dgamma_d = [dgamma_du * dir_[d] + dgamma_dh * dh_du[d] for d in range(2)]
+    return tau, gamma, dtau_d, dgamma_d
+
+
+def _metric_parameters(b, upq, vpq, nu, inv_dt2, grad_div):
+    """``tau`` and ``gamma`` from the element metric tensor ``G`` (smooth in ``u``).
+
+    ``tau = [(2/dt)^2 + u.G u + nu^2 G:G / 2]^(-1/2)`` (Shakib 1991, Bazilevs
+    et al. 2007; ``u.G u = (2|u|/h_s)^2`` with the cell size ``h_s`` in the
+    flow direction, and ``nu^2 G:G / 2 = (4 nu / h^2)^2`` on a square cell,
+    the size of the smallest cell dimension on a stretched one);
+    ``gamma = (h_s |u| / 2) min(1, Re_h / 3)`` with ``h_s |u| / 2 = |u|^2 / q``,
+    ``q = sqrt(u.G u)``, ``Re_h = |u|^2 / (nu q)``.  Returns ``tau, gamma``
+    and their derivatives with respect to the velocity components.
+    """
+    gxx, gxy, gyy = b.G
+    gu = (gxx * upq + gxy * vpq, gxy * upq + gyy * vpq)                  # G u
+    q2 = upq * gu[0] + vpq * gu[1]                                       # u . G u
+    gg = gxx ** 2 + 2.0 * gxy ** 2 + gyy ** 2                            # G : G
+    tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * nu ** 2 * gg)
+    dtau_d = [-tau ** 3 * gu[d] for d in range(2)]
+    umag2 = upq ** 2 + vpq ** 2
+    moving = q2 > 0
+    q2s = np.where(moving, q2, 1.0)
+    q = np.sqrt(q2s)
+    if grad_div:
+        hu2 = np.where(moving, umag2 / q, 0.0)                           # h_s |u| / 2
+        re_h = hu2 / nu
+        low = re_h < 3.0
+        gamma = np.where(low, hu2 * re_h / 3.0, hu2)
+        u_d = (upq, vpq)
+        dgamma_d = [np.where(moving,
+                             np.where(low,
+                                      4.0 * umag2 * u_d[d] / (3.0 * nu * q2s)
+                                      - 2.0 * umag2 ** 2 * gu[d] / (3.0 * nu * q2s ** 2),
+                                      2.0 * u_d[d] / q - umag2 * gu[d] / q ** 3),
+                             0.0) for d in range(2)]
+    else:
+        gamma = 0.0 * q2
+        dgamma_d = [gamma, gamma]
+    return tau, gamma, dtau_d, dgamma_d

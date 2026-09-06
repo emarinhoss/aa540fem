@@ -13,7 +13,9 @@ from aa540fem.incompressible.assembler import FlowAssembler
 from aa540fem.incompressible.problem import FlowProblem
 from aa540fem.incompressible.solution import FlowSolution
 from aa540fem.linalg.continuation import pseudo_transient
+from aa540fem.linalg.dirichlet import DirichletEliminator
 from aa540fem.linalg.newton import newton_iterate
+from aa540fem.linalg.solvers import LinearSolver
 
 CONTINUATIONS = ("auto", "newton", "ptc")
 
@@ -26,6 +28,32 @@ def local_pseudo_time_scaling(mesh, nu, u_ref=1.0):
     at their own pace (standard local time stepping)."""
     h = mesh.nodal_size()
     return h / (u_ref + nu / h)
+
+
+def project_divergence_free(asm: FlowAssembler, U, fixed, vals):
+    """Closest discretely divergence-free velocity to ``U`` (in the mass norm).
+
+    Solves the saddle-point system ``[[M, -B^T], [B, 0]] [w; q] = [M u; 0]``
+    with the Dirichlet values imposed (the same projection the RK45 time
+    integrator applies to its initial state) and returns ``U`` with the
+    velocity replaced by ``w``; the pressure entries are kept.  The
+    pseudo-transient continuation starts from this state: from a velocity
+    that violates continuity, the first pseudo-time step needs a pressure
+    jump of order ``1 / dtau`` to enforce it, which the stabilisation terms
+    (quadratic in ``u`` and ``p``) turn into a residual that does not shrink
+    with the step, so every step is rejected.
+    """
+    N = asm.space.N
+    B = (asm.Bx + asm.By).tocsr()
+    P = (asm.M - B.T + B).tocsr()
+    elim = DirichletEliminator(P, fixed)
+    b = np.zeros(asm.space.ndof)
+    b[:2 * N] = (asm.M @ U)[:2 * N]
+    sol, _ = LinearSolver(elim.K_bc, "direct", symmetric=False).solve(elim.apply_rhs(b, vals))
+    V = np.array(U, dtype=float, copy=True)
+    V[:2 * N] = sol[:2 * N]
+    V[fixed] = vals
+    return V
 
 
 def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: bool = False,
@@ -81,6 +109,7 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
         path = "ptc" if res is None else "newton+ptc"
         if res is not None and res.residuals[-1] < res.residuals[0]:
             U = res.T                           # continue from Newton's best iterate
+        U = project_divergence_free(asm, U, fixed, vals)
         M = asm.M
         if local_timestep:
             vel = fixed < 2 * asm.space.N
