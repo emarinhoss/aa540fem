@@ -97,4 +97,20 @@ at the price of iterations that grow with the Reynolds number.
 |---|---|---|---|
 | turbulent flat plate, Re 1e6 (`turbulent_flat_plate.py`) | 9 min | 4 min | Cf 0.00327 vs Coles-Fernholz 0.00323, unchanged |
 | cylinder shedding, 1600 theta steps (`cylinder_shedding.py`) | 77 min | 19 min | St 0.3013, C_D,max 3.2303, C_L,max 0.9958, unchanged |
+| cylinder shedding, twice-finer mesh (`cylinder_bl_fine.msh`, 41k nodes, 92k unknowns) | - | 74 min | St 0.3014, C_D,max 3.2320, C_L,max 0.9972 |
+
+The refined shedding run is the data point for the scaling of the direct
+solver: 3.8x the unknowns cost 3.9x the time per step (2.8 s against
+0.71 s).  Measured on the two Jacobians (numba assembly, MUMPS, 4 threads):
+
+| mesh | unknowns | assembly | factorise | solve | factor entries |
+|---|---|---|---|---|---|
+| `cylinder_bl.msh` | 24281 | 0.04 s | 0.36 s | 0.008 s | 4.3e6 |
+| `cylinder_bl_fine.msh` | 92330 | 0.11 s | 2.66 s | 0.040 s | 2.0e7 |
+
+The factorisation grew 7.4x, as the n^1.5 of a 2D sparse LU predicts
+(3.8^1.5 = 7.4), the assembly linearly, so a theta step on the fine mesh is
+95 % factorisation; the factors take 0.25 GB.  Fewer refactorisations
+(reusing the factors over several steps while Newton contracts) or the
+Krylov path are what would speed this case up further, not the assembly.
 
