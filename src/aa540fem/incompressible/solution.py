@@ -99,6 +99,17 @@ class FlowSolution:
         """
         return wall_traction(self, tag, order)
 
+    def pressure_at(self, points) -> np.ndarray:
+        """Pressure at arbitrary points ``(m, d)``.
+
+        On simplex meshes (triangles, tetrahedra) the containing element is
+        found from the corner (barycentric) coordinates and the linear
+        pressure interpolated there, which is exact; on quadrilateral and
+        hexahedral meshes the nearest pressure node is used.  Points outside
+        the mesh take the value of the element they are closest to.
+        """
+        return pressure_at_points(self, np.atleast_2d(np.asarray(points, dtype=float)))
+
     def velocity_3d(self) -> np.ndarray:
         """Velocity as an ``(N, 3)`` array (zero third component in 2-D) for output."""
         vel = self.velocity.T
@@ -227,6 +238,41 @@ def _wall_traction_3d(sol: FlowSolution, tag: str, order) -> dict:
     out = {k: np.concatenate(v) for k, v in out.items()}
     order_ = np.argsort(out["x"], kind="stable")
     return {k: v[order_] for k, v in out.items()}
+
+
+def pressure_at_points(sol: FlowSolution, points: np.ndarray) -> np.ndarray:
+    mesh = sol.mesh
+    d = mesh.dim
+    p = sol.p
+    out = np.full(points.shape[0], np.nan)
+    best = np.full(points.shape[0], np.inf)
+    for name, conn in mesh.cells.items():
+        el = get_element(name)
+        nc = el.n_corners
+        if nc != d + 1:                                     # not a simplex: nearest node
+            nodes = sol.space.pressure_nodes
+            dist = np.linalg.norm(points[:, None, :] - mesh.points[nodes][None, :, :], axis=2)
+            k = dist.argmin(axis=1)
+            closer = dist[np.arange(points.shape[0]), k] < best
+            out[closer] = p[k[closer]]
+            best[closer] = dist[np.arange(points.shape[0]), k][closer]
+            continue
+        corners = mesh.points[conn[:, :nc]]                 # (ne, d+1, d)
+        # barycentric coordinates of every point in every element (small meshes:
+        # chunk the elements to bound the memory)
+        T = np.transpose(corners[:, 1:, :] - corners[:, :1, :], (0, 2, 1))    # (ne, d, d)
+        Tinv = np.linalg.inv(T)
+        for q, x in enumerate(points):
+            lam = np.einsum("eij,ej->ei", Tinv, x[None, :] - corners[:, 0, :])
+            lam = np.column_stack([1.0 - lam.sum(axis=1), lam])
+            violation = np.maximum(0.0, -lam).max(axis=1)      # 0 inside the element
+            e = int(violation.argmin())
+            if violation[e] < best[q]:
+                best[q] = violation[e]
+                pe = p[sol.space.p_index[conn[e, :nc]]]
+                out[q] = float(np.clip(lam[e], 0.0, 1.0) @ pe / max(np.clip(lam[e], 0, 1).sum(),
+                                                                       1e-300))
+    return out
 
 
 def traction_forces(sol: FlowSolution, tag: str, order: int = 3):

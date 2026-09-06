@@ -296,6 +296,64 @@ def make_box_tet10(name: str = "box_tet10", size=(2.0, 1.0, 1.0), lc: float = 0.
         gmsh.finalize()
 
 
+def make_cylinder3d(name: str = "cylinder3d_tet10", lc: float = 0.05, lc_cyl: float = 0.01,
+                    thickness: float = 0.06):
+    """Schaefer-Turek 3D-1Z geometry: channel ``[0, 2.5] x [0, 0.41] x [0, 0.41]``
+    with a cylinder of diameter 0.1 along ``z`` centred at ``(0.5, 0.2)``, in
+    10-node tetrahedra graded from ``lc_cyl`` at the cylinder to ``lc`` at
+    distance ``thickness``.  Physical surfaces: ``inlet`` (x = 0), ``outlet``
+    (x = 2.5), ``walls`` (the four channel walls) and ``cylinder``."""
+    gmsh.initialize()
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.model.add(name)
+        L, H = 2.5, 0.41
+        channel = gmsh.model.occ.addBox(0, 0, 0, L, H, H)
+        cyl = gmsh.model.occ.addCylinder(0.5, 0.2, 0, 0, 0, H, 0.05)
+        gmsh.model.occ.cut([(3, channel)], [(3, cyl)])
+        gmsh.model.occ.synchronize()
+        inlet, outlet, walls, cylinder = [], [], [], []
+        for _, s in gmsh.model.getEntities(2):
+            x, y, z = gmsh.model.occ.getCenterOfMass(2, s)
+            xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(2, s)
+            flat_x = (xmax - xmin) < 1e-6
+            if flat_x and abs(x) < 1e-6:
+                inlet.append(s)
+            elif flat_x and abs(x - L) < 1e-6:
+                outlet.append(s)
+            elif abs(x - 0.5) < 0.06 and abs(y - 0.2) < 0.06 and (zmax - zmin) > 0.4:
+                cylinder.append(s)                                  # the cylinder surface
+            else:
+                walls.append(s)
+        for tag, faces in (("inlet", inlet), ("outlet", outlet), ("walls", walls),
+                           ("cylinder", cylinder)):
+            gmsh.model.addPhysicalGroup(2, faces, name=tag)
+        gmsh.model.addPhysicalGroup(3, [v for _, v in gmsh.model.getEntities(3)], name="fluid")
+        f = gmsh.model.mesh.field
+        dist = f.add("Distance")
+        f.setNumbers(dist, "SurfacesList", cylinder)
+        f.setNumber(dist, "Sampling", 100)
+        thr = f.add("Threshold")
+        f.setNumber(thr, "InField", dist)
+        f.setNumber(thr, "SizeMin", lc_cyl)
+        f.setNumber(thr, "SizeMax", lc)
+        f.setNumber(thr, "DistMin", 0.0)
+        f.setNumber(thr, "DistMax", thickness)
+        f.setAsBackgroundMesh(thr)
+        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+        gmsh.option.setNumber("Mesh.ElementOrder", 2)
+        gmsh.option.setNumber("Mesh.SecondOrderIncomplete", 0)
+        gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+        gmsh.model.mesh.generate(3)
+        out = HERE / f"{name}.msh"
+        gmsh.write(str(out))
+        return out
+    finally:
+        gmsh.finalize()
+
+
 if __name__ == "__main__":
     for name, (geo, order, quads) in MESHES.items():
         print("wrote", make(name, order, quads, HERE / geo))
@@ -307,3 +365,4 @@ if __name__ == "__main__":
     print("wrote", make_turbulent_flat_plate())
     print("wrote", make_airfoil())
     print("wrote", make_box_tet10())
+    print("wrote", make_cylinder3d())
