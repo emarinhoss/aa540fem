@@ -58,6 +58,29 @@ def extruded_mesh(path, layers=5, grading=1.5):
     return m3
 
 
+def extruded_initial_state(path, mesh3):
+    """Start state for the extruded channel: the 2-D solution on the cross-section
+    (inflow 4 UM y (H - y) / H^2, the mid-plane profile of the 3-D inflow) scaled
+    by the parabolic z profile, zero spanwise velocity, the 2-D pressure.  A
+    far better start than rest: the first Newton step from rest overshoots on
+    coarse cells with the metric stabilisation parameters."""
+    from aa540fem.incompressible.space import TaylorHoodSpace
+
+    mesh2 = read_mesh(path)
+    inflow2 = lambda x, y: 4.0 * UM * y * (H - y) / H ** 2
+    prob2 = FlowProblem(mesh2, mu=NU, rho=1.0, stabilisation=True,
+                        bc={"inlet": (inflow2, 0.0), "walls": (0.0, 0.0),
+                            "cylinder": (0.0, 0.0), "outlet": "open"})
+    sol2 = solve_flow(prob2, continuation="auto")
+    planes = mesh3.n_nodes // mesh2.n_nodes
+    profile = 4.0 * mesh3.z * (H - mesh3.z) / H ** 2
+    space3 = TaylorHoodSpace(mesh3)
+    u = np.tile(sol2.u, planes) * profile
+    v = np.tile(sol2.v, planes) * profile
+    p = np.tile(sol2.p_nodal, planes)[space3.pressure_nodes]
+    return np.concatenate([u, v, np.zeros(mesh3.n_nodes), p])
+
+
 def coefficients(sol):
     fx, fy, _ = sol.forces("cylinder")
     scale = 2.0 / (UBAR ** 2 * D * H)
@@ -87,6 +110,7 @@ def main(argv=None):
     mesh = (extruded_mesh(args.extrude, args.layers, args.grading) if args.extrude
             else read_mesh(args.mesh))
     prob = problem(mesh)
+    U0 = extruded_initial_state(args.extrude, mesh) if args.extrude else None
     if rank() == 0:
         print(f"{mesh.n_nodes} nodes, {mesh.n_elems} elements ({', '.join(mesh.cells)})")
     t0 = time.time()
@@ -94,9 +118,10 @@ def main(argv=None):
         from aa540fem.parallel.flow import DistributedFlowSystem
 
         method = "fieldsplit" if config.linear_backend.startswith("petsc") else "direct"
-        sol = DistributedFlowSystem(prob).solve_steady(method=method, verbose=rank() == 0)
+        sol = DistributedFlowSystem(prob).solve_steady(U0=U0, method=method,
+                                                       verbose=rank() == 0)
     else:
-        sol = solve_flow(prob, verbose=True)
+        sol = solve_flow(prob, U0=U0, verbose=True)
     wall = time.time() - t0
     if rank() != 0:
         return sol
