@@ -83,8 +83,7 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
     if continuation not in CONTINUATIONS:
         raise ValueError(f"Unknown continuation {continuation!r}; expected one of {CONTINUATIONS}")
     asm = FlowAssembler(problem)
-    if method == "fieldsplit":
-        method = fieldsplit_factory(asm)
+    method = linear_method(method, asm)
     fixed, vals = asm.dirichlet()
     F = asm.body_load()
     U = np.zeros(asm.space.ndof) if U0 is None else np.array(U0, dtype=float, copy=True)
@@ -144,10 +143,43 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
     return FlowSolution(problem, asm.space, res.T, info, asm)
 
 
-def fieldsplit_factory(asm, rtol=1e-8, velocity_pc="ilu", gpu=None):
+def linear_method(method, asm):
+    """Resolve the ``method`` argument of the flow solvers.
+
+    ``"direct"`` stays the sparse LU unless the run configuration asks for the
+    PETSc Krylov path (``--linear petsc`` / ``petsc-cuda``,
+    ``AA540FEM_LINEAR``); ``"fieldsplit"`` is that path explicitly; a
+    callable ``A -> solver`` is passed through.
+    """
+    if callable(method):
+        return method
+    if method == "direct":
+        try:
+            from aa540fem.hardware import get_config
+
+            backend = get_config().linear_backend
+        except ImportError:
+            backend = "scipy"
+        if backend in ("petsc", "petsc-cuda"):
+            return fieldsplit_factory(asm, gpu=backend == "petsc-cuda")
+        return method
+    if method == "fieldsplit":
+        return fieldsplit_factory(asm)
+    return method
+
+
+def fieldsplit_factory(asm, rtol=1e-6, velocity_pc="ilu", gpu=None, schur="lsc", options=None):
     """``method`` callable for the Newton/PTC loops: the PETSc fieldsplit solver
-    on the eliminated Jacobian, with the pressure mass matrix scaled by the
-    effective viscosity as Schur-complement preconditioner."""
+    on the eliminated Jacobian (:class:`aa540fem.linalg.krylov.FieldSplitSolver`).
+
+    ``schur``: ``"lsc"`` (least-squares commutator, default: robust for the
+    convective and stabilised Jacobians) or ``"mass"`` (viscosity-scaled
+    pressure mass matrix, adequate for Stokes-like problems);
+    ``velocity_pc``: ``"ilu"`` or ``"gamg"``; ``rtol``: relative tolerance of
+    the linear solves (the Newton residual is always evaluated exactly, so a
+    moderate value only costs Newton iterations); ``options``: extra PETSc
+    options (see the solver class).
+    """
     from aa540fem.linalg.krylov import FieldSplitSolver, pressure_mass_matrix
 
     if gpu is None:
@@ -159,11 +191,12 @@ def fieldsplit_factory(asm, rtol=1e-8, velocity_pc="ilu", gpu=None):
             gpu = False
     Mp = pressure_mass_matrix(asm)
     n_vel = 2 * asm.space.N
+    Qdiag = np.asarray(abs(asm.M).sum(axis=1)).ravel()[:n_vel]     # lumped velocity mass
 
     class _Adapter:
         def __init__(self, A):
             self.solver = FieldSplitSolver(A, n_vel, Mp, rtol=rtol, velocity_pc=velocity_pc,
-                                           gpu=gpu)
+                                           gpu=gpu, schur=schur, Qdiag=Qdiag, options=options)
 
         def solve(self, b):
             x = self.solver.solve(b)
@@ -171,4 +204,3 @@ def fieldsplit_factory(asm, rtol=1e-8, velocity_pc="ilu", gpu=None):
                        "residual": self.solver.residual}
 
     return _Adapter
-

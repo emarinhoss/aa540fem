@@ -89,7 +89,8 @@ fit one process, not to speed this size up.
 What remains after these phases is the factorisation itself (MUMPS, one
 process) and, in the theta scheme, the per-step refactorisation; the
 Krylov path (`solve_flow(method="fieldsplit")`) removes the factorisation
-at the price of iterations that grow with the Reynolds number.
+at the price of iterations that grow with the Reynolds number (see the
+Krylov section below).
 
 ### Validation cases with the final defaults (numba, MUMPS, one process)
 
@@ -121,4 +122,34 @@ hence the forces, unchanged (the residual is always the true one).  The
 coarse mesh, where the factorisation was 60 % of a step, gains
 proportionally less (its 19 minutes were measured with one factorisation
 per step).  Beyond this the Krylov path is the remaining lever.
+
+### Krylov solver hardening (fieldsplit, `linalg/krylov.py`)
+
+FGMRES iterations to a relative residual of 1e-8 on the eliminated
+Jacobians at the converged states of the validation cases, 4 threads;
+"mass" is the viscosity-scaled pressure mass matrix as Schur-complement
+preconditioner (the previous default), "LSC" the least-squares commutator;
+the velocity block is solved exactly (LU, to isolate the Schur
+approximation), by ILU(1) (the CPU default) or by two GAMG V-cycles (the
+device choice).  "-" means no convergence within 300 iterations.
+
+| Jacobian | unknowns | direct solve | mass + LU | LSC + LU | LSC + ILU(1) | LSC + GAMG |
+|---|---|---|---|---|---|---|
+| cavity Re 100, Q2/Q1 | 5427 | 0.05 s | 75 | 36 | 34 (0.06 s) | 35 |
+| cavity Re 100, stabilised | 5427 | 0.05 s | 77 | 33 | 35 (0.07 s) | 39 |
+| cavity Re 1000, stabilised | 9539 | 0.10 s | - | 58 | 75 (0.19 s) | 98 |
+| cylinder Re 20, stabilised, steady | 24281 | 0.36 s | - | 76 | 133 (0.95 s) | 142 |
+| cylinder Re 100, theta step dt 0.005 | 24281 | 0.36 s | - | 25 | 28 (0.43 s) | 28 |
+
+Before this the solver used GMRES restart 50, ILU(0) with a single sweep,
+and the mass matrix: 300 to 500 iterations without convergence on every
+case above.  Three things mattered: the Schur approximation (the mass
+matrix ignores the grad-div term, which is hundreds of times the viscosity
+on the cylinder, and the convection), the restart length (cavity Re 100:
+156 to 75 iterations from restart 50 to 200) and ILU(0), which stalls on
+the steady cylinder where ILU(1) converges.  Whole solves through the
+Krylov path reproduce the direct ones (cavity Re 1000 to 2e-12, cylinder
+Re 20 to 7e-13, 20 theta steps of the cylinder to 3e-9) with the same
+Newton counts; in 2D they take 1.1 to 2.7 times the direct time, as
+expected at these sizes.
 

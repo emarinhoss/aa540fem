@@ -326,8 +326,9 @@ with MUMPS when PETSc is installed.  Wall times on a 4-core machine
 [`docs/parallel.md`](docs/parallel.md) explains which option fits which
 machine, and what the MPI (`aa540fem.parallel`, replicated assembly with a
 distributed MUMPS factorisation, plus a METIS domain-decomposition
-prototype) and GPU (PETSc Krylov path with `--linear petsc-cuda`) routes
-are.
+prototype) and GPU (PETSc Krylov path: FGMRES with a fieldsplit
+preconditioner, least-squares-commutator Schur complement, `--linear petsc`
+or `petsc-cuda`) routes are.
 
 ## Modules
 

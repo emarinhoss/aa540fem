@@ -55,6 +55,12 @@ def case_steady():
     return f"{sol.info['iterations']} Newton it."
 
 
+def case_krylov():
+    prob = cylinder_problem(0.3)
+    sol = solve_flow(prob, method="fieldsplit")
+    return f"{sol.info['iterations']} Newton it., fieldsplit LSC + ILU(0)"
+
+
 def case_theta():
     prob = cylinder_problem(1.5)
     run = solve_flow_transient(prob, dt=0.005, t_end=0.1, scheme="theta", startup_steps=2,
@@ -80,7 +86,8 @@ def case_rans():
     return f"{len(rans.history)} outer it."
 
 
-CASES = {"steady": case_steady, "theta": case_theta, "rk45": case_rk45, "rans": case_rans}
+CASES = {"steady": case_steady, "theta": case_theta, "rk45": case_rk45, "rans": case_rans,
+         "krylov": case_krylov}
 
 
 def attribute(stats: pstats.Stats):

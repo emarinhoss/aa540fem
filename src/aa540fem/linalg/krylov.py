@@ -39,6 +39,77 @@ def pressure_mass_matrix(asm, scaled: bool = True) -> sp.csr_matrix:
                          shape=(Np, Np)).tocsr()
 
 
+_instances = [0]                          # unique PETSc options prefix per solver
+
+
+class LSCPreconditioner:
+    """Least-squares commutator approximation of the inverse Schur complement.
+
+    For the eliminated Jacobian ``[[F, -B^T], [B, C]]`` the Schur complement
+    ``S = C + B F^-1 B^T`` is approximated by
+    ``S^-1 ~ L^-1 (B Q^-1 F Q^-1 B^T) L^-1`` with ``L = B Q^-1 B^T`` and ``Q``
+    the lumped velocity mass matrix (Elman, Howle, Shadid, Shuttleworth and
+    Tuminaro 2006).  It is purely algebraic, so convection, grad-div and
+    SUPG terms in ``F`` are accounted for automatically; ``L`` is a
+    pressure-Laplacian-like matrix factorised once.  Pinned pressure dofs
+    (identity rows of ``C``, zero rows of ``B``) are passed through.
+    """
+
+    def __init__(self, A, n_vel, Qdiag=None, comm=None, mat_type="aij", prefix="lsc_"):
+        from petsc4py import PETSc
+
+        A = sp.csr_matrix(A)
+        F = A[:n_vel, :n_vel]
+        B = A[n_vel:, :n_vel].tocsr()
+        BT = A[:n_vel, n_vel:].tocsr() * -1.0          # A01 = -B^T
+        if Qdiag is None:
+            Qdiag = np.abs(F).sum(axis=1).A1           # fallback: row sums of |F|
+        qinv = 1.0 / np.where(Qdiag > 0, Qdiag, 1.0)
+        L = (B @ sp.diags(qinv) @ BT).tocsr()
+        pinned = np.asarray(L.diagonal() == 0.0)
+        if pinned.any():
+            L = L + sp.diags(pinned.astype(float))
+        comm = comm or PETSc.COMM_SELF
+
+        def mat(M):
+            M = sp.csr_matrix(M)
+            P = PETSc.Mat().createAIJ(size=M.shape, csr=(M.indptr.astype(PETSc.IntType),
+                                                          M.indices.astype(PETSc.IntType),
+                                                          M.data), comm=comm)
+            P.assemble()
+            if mat_type != "aij":
+                P.convert(mat_type)
+            return P
+
+        self.F, self.B, self.BT = mat(F), mat(B), mat(BT)
+        self.L = mat(L)
+        self.ksp = PETSc.KSP().create(comm=comm)
+        self.ksp.setOperators(self.L)
+        self.ksp.setType("preonly")
+        self.ksp.getPC().setType("lu")
+        self.ksp.setOptionsPrefix(prefix)
+        self.ksp.setFromOptions()
+        self.qinv = self.F.createVecRight()
+        self.qinv.setArray(qinv)
+        self.pin = self.L.createVecRight()
+        self.pin.setArray(pinned.astype(float))
+        self._t = self.L.createVecRight()
+        self._u1 = self.F.createVecRight()
+        self._u2 = self.F.createVecRight()
+        self._p = self.L.createVecRight()
+
+    def apply(self, pc, x, y):
+        self.ksp.solve(x, self._t)                     # L^-1 x
+        self.BT.mult(self._t, self._u1)                # B^T
+        self._u1.pointwiseMult(self._u1, self.qinv)    # Q^-1
+        self.F.mult(self._u1, self._u2)                # F
+        self._u2.pointwiseMult(self._u2, self.qinv)    # Q^-1
+        self.B.mult(self._u2, self._p)                 # B
+        self.ksp.solve(self._p, y)                     # L^-1
+        self._p.pointwiseMult(self.pin, x)             # pinned dofs: identity
+        y.axpy(1.0, self._p)
+
+
 class FieldSplitSolver:
     """FGMRES + fieldsplit (Schur, lower) for the eliminated saddle-point Jacobian.
 
@@ -52,7 +123,7 @@ class FieldSplitSolver:
     backend = "petsc-krylov"
 
     def __init__(self, A, n_vel, Mp, rtol=1e-8, maxiter=300, velocity_pc="ilu", gpu=False,
-                 comm=None):
+                 comm=None, options=None, schur="lsc", restart=200, Qdiag=None):
         if not petsc_available():
             raise ImportError("petsc4py is required for the fieldsplit solver")
         from petsc4py import PETSc
@@ -77,10 +148,12 @@ class FieldSplitSolver:
             self.Mp.convert(mat_type)
 
         self.ksp = PETSc.KSP().create(comm=comm)
+        _instances[0] += 1
+        self.ksp.setOptionsPrefix(f"fs{_instances[0]}_")    # options are global in PETSc
         self.ksp.setOperators(self.A)
         self.ksp.setType("fgmres")
         self.ksp.setTolerances(rtol=rtol, max_it=maxiter)
-        self.ksp.setGMRESRestart(50)
+        self.ksp.setGMRESRestart(restart)
         pc = self.ksp.getPC()
         pc.setType("fieldsplit")
         is_u = PETSc.IS().createStride(self.n_vel, first=0, step=1, comm=comm)
@@ -88,22 +161,39 @@ class FieldSplitSolver:
         pc.setFieldSplitIS(("u", is_u), ("p", is_p))
         pc.setFieldSplitType(PETSc.PC.CompositeType.SCHUR)
         pc.setFieldSplitSchurFactType(PETSc.PC.SchurFactType.LOWER)
-        pc.setFieldSplitSchurPreType(PETSc.PC.SchurPreType.USER, self.Mp)
         opts = PETSc.Options()
         prefix = self.ksp.getOptionsPrefix() or ""
+        if schur not in ("mass", "lsc"):
+            raise ValueError(f"unknown Schur preconditioner {schur!r}; expected 'mass' or 'lsc'")
+        self.schur = schur
+        pc.setFieldSplitSchurPreType(PETSc.PC.SchurPreType.USER, self.Mp)
         opts[f"{prefix}fieldsplit_u_ksp_type"] = "preonly"
         opts[f"{prefix}fieldsplit_u_pc_type"] = velocity_pc
+        if velocity_pc == "ilu" and "fieldsplit_u_pc_type" not in (options or {}):
+            opts[f"{prefix}fieldsplit_u_pc_factor_levels"] = 1     # ILU(0) stalls at Re 20+
         if velocity_pc == "gamg":
             opts[f"{prefix}fieldsplit_u_pc_gamg_type"] = "agg"
             opts[f"{prefix}fieldsplit_u_pc_gamg_agg_nsmooths"] = 0     # nonsymmetric block
             opts[f"{prefix}fieldsplit_u_mg_levels_ksp_type"] = "richardson"
             opts[f"{prefix}fieldsplit_u_mg_levels_pc_type"] = "sor"
+            opts[f"{prefix}fieldsplit_u_ksp_type"] = "richardson"      # two V-cycles
+            opts[f"{prefix}fieldsplit_u_ksp_max_it"] = 2
         opts[f"{prefix}fieldsplit_p_ksp_type"] = "preonly"
-        opts[f"{prefix}fieldsplit_p_pc_type"] = "jacobi"
+        opts[f"{prefix}fieldsplit_p_pc_type"] = "lu" if schur == "mass" else "none"
         if gpu and velocity_pc == "ilu":                 # no ILU on the device
             opts[f"{prefix}fieldsplit_u_pc_type"] = "jacobi"
+        for key, value in (options or {}).items():       # caller's PETSc options win
+            opts[f"{prefix}{key}"] = value
         self.ksp.setFromOptions()
         pc.setUp()
+        self.lsc = None
+        if schur == "lsc":
+            self.lsc = LSCPreconditioner(A, self.n_vel, Qdiag=Qdiag, comm=comm, mat_type=mat_type,
+                                         prefix=f"{prefix}lsc_")
+            _, ksp_p = pc.getFieldSplitSubKSP()
+            pc_p = ksp_p.getPC()
+            pc_p.setType(PETSc.PC.Type.PYTHON)
+            pc_p.setPythonContext(self.lsc)
         self._x = self.A.createVecRight()
         self._b = self.A.createVecRight()
         if gpu:

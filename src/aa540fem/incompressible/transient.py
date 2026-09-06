@@ -9,6 +9,7 @@ import numpy as np
 from aa540fem.incompressible.assembler import FlowAssembler
 from aa540fem.incompressible.problem import SCHEMES, FlowProblem, values_at_pair
 from aa540fem.incompressible.solution import FlowSolution, TransientFlowSolution
+from aa540fem.incompressible.steady import linear_method
 from aa540fem.linalg.direct import factorise
 from aa540fem.linalg.dirichlet import eliminate
 from aa540fem.linalg.newton import newton_iterate
@@ -80,6 +81,7 @@ def solve_flow_transient(problem: FlowProblem, dt: float, t_end: float, theta: f
         raise ValueError(f"dt = {dt} must divide t_end = {t_end}")
 
     asm = FlowAssembler(problem)
+    method = linear_method(method, asm)
     space = asm.space
     B, BT, M = asm.B, asm.BT, asm.M
     time_dependent = problem.depends_on_time()

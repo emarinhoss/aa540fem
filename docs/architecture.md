@@ -94,7 +94,8 @@ discontinuous Galerkin discretisation on the same `Mesh`, `elements` and
 **Iterative solvers for large cases.**  Block preconditioning for the
 saddle-point system (pressure Schur complement approximations) is what
 lifts the direct-solver limit of roughly 10^5 unknowns; `linalg/krylov.py`
-holds the PETSc fieldsplit version.
+holds the PETSc fieldsplit version (least-squares-commutator Schur
+complement, ILU or multigrid on the velocity block).
 
 **Performance layers** (see `docs/parallel.md`): `backends/pattern.py`
 (fixed sparsity pattern, deterministic scatter), `backends/numpy_kernels.py`

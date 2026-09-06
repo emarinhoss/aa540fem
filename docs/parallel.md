@@ -103,10 +103,27 @@ A GPU helps two things: element assembly (embarrassingly parallel, but
 already off the critical path after step 3) and the sparse matrix-vector
 products of an iterative solver.  It does not help the sparse LU, which is
 what the solver relies on today.  The GPU path is therefore the PETSc
-Krylov solver of `linalg/krylov.py`: flexible GMRES with a block
-(fieldsplit) preconditioner, the velocity block preconditioned by ILU or
-algebraic multigrid (GAMG) and the pressure Schur complement by the
-viscosity-scaled pressure mass matrix (`solve_flow(method="fieldsplit")`).  `--linear petsc-cuda` switches PETSc's matrix and vector types to
+Krylov solver of `linalg/krylov.py` (`solve_flow(method="fieldsplit")`,
+`--linear petsc`): flexible GMRES (restart 200) with a block-triangular
+(fieldsplit, Schur lower) preconditioner.  The velocity block is
+preconditioned by ILU(1) on the CPU or by two V-cycles of algebraic
+multigrid (GAMG) where ILU is not available (the device); the pressure
+Schur complement `S = C + B F^-1 B^T` by the least-squares commutator
+(LSC, `LSCPreconditioner`): `S^-1 ~ L^-1 (B Q^-1 F Q^-1 B^T) L^-1` with
+`L = B Q^-1 B^T` and `Q` the lumped velocity mass matrix, `L` factorised
+once.  LSC is purely algebraic, so the convection, SUPG and grad-div terms
+of `F` are accounted for automatically; the viscosity-scaled pressure mass
+matrix (`schur="mass"`) is kept for Stokes-like problems.  Measured on the
+converged Jacobians of the validation cases (`docs/performance.md`): 34 to
+133 iterations, and 28 on the theta-scheme Jacobian of the shedding
+cylinder, where the mass-matrix preconditioner did not converge in 300
+on three of the five cases.  In 2D the direct solver is still faster
+(a factorisation of 24k unknowns takes 0.4 s); the Krylov path is for
+the 3D and GPU cases where it is not possible.  Each solver instance uses
+its own PETSc options prefix (PETSc's options database is global) and
+accepts extra options through `fieldsplit_factory(options=...)`.
+
+`--linear petsc-cuda` switches PETSc's matrix and vector types to
 `aijcusparse`/`cuda`, which PETSc detects at build time; the probe reports
 whether the installed PETSc has CUDA and whether a device is present, and
 the corresponding tests skip where it is not.  Assembly stays on the CPU;
