@@ -258,18 +258,24 @@ intervals of Schaefer and Turek (1996):
 | `cyl3d_coarse.msh` (81k) | MUMPS / fieldsplit-LSC / 4-rank domain decomposition | 268 s / 235 s / 97 s | 6.240 | -0.016 | 0.1758 |
 | `cylinder3d_tet10.msh` (132k) | MUMPS, 6 GB | 592 s | 6.227 | 0.014 | 0.1742 |
 | `cyl3d_fine2.msh` (227k) | fieldsplit-LSC, 8 GB | 992 s | 6.207 | 0.014 | 0.1718 |
+| `cylinder3d1z_bl.msh` extruded, 5 graded layers (164k) | 4-rank domain decomposition, 2-D start | 364 s | 6.170 | 0.0112 | 0.1656 |
 | reference (interval) | | | 6.185 (6.05-6.25) | 0.0094 (0.008-0.010) | 0.1710 (0.165-0.175) |
 
-Drag and pressure difference converge monotonically towards the reference
-(0.4 % and 0.5 % away on the finest mesh) and lie inside the intervals
-from 132k unknowns on; the lift, 0.15 % of the drag, has the right sign
-from 132k unknowns but stays at 0.014, which needs a boundary-layer
-resolution of the cylinder that these isotropic tetrahedral meshes do not
-have (refining the cylinder surface alone while coarsening the channel,
-`cyl3d_bl.msh`, makes every number worse: at this blockage the channel
-walls and the wake set the drag).  The direct solver and the Krylov
-solver give identical numbers; the Krylov path is the one that fits the
-227k case in memory.
+On the tetrahedral meshes drag and pressure difference converge
+monotonically towards the reference (0.4 % and 0.5 % away on the finest
+mesh) and lie inside the intervals from 132k unknowns on; the lift, 0.15 %
+of the drag, has the right sign from 132k unknowns but stays at 0.014,
+which needs a boundary-layer resolution of the cylinder that isotropic
+tetrahedra do not have (refining the cylinder surface alone while
+coarsening the channel, `cyl3d_bl.msh`, makes every number worse: at this
+blockage the channel walls and the wake set the drag).  The extruded
+boundary-layer mesh (`--extrude`: the 2-D cross-section with quadrilateral
+layers on the cylinder, extruded into prisms and hexahedra with layers
+graded towards the end walls) brings the lift to 0.0112 at 164k unknowns
+with drag and pressure difference inside the intervals; the remaining
+lift error is the spanwise and cross-section resolution of that mesh.
+The direct solver and the Krylov solver give identical numbers; the Krylov
+path is the one that fits the 227k case in memory.
 
 **Lid-driven cube** (`examples/cavity3d.py`, Re 100, hexahedron27, lid
 ``u = 1`` at y = 1).  Extrema of the centreline velocities on successive

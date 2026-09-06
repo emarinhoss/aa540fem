@@ -186,6 +186,7 @@ theta distributed fieldsplit       4      6.96  9 factorisations, |dU|/|U| = 9e-
 | `cylinder3d_tet10.msh` | 132k | MUMPS | 7 | 592 s | 6.6 GB | 6.2273 | 0.0141 | 0.1742 |
 | `cyl3d_bl.msh` (cylinder refined, channel coarsened) | 99k | MUMPS, Newton then PTC | 6 | 492 s | | 6.3770 | 0.0540 | 0.1806 |
 | `cyl3d_fine2.msh` | 227k | fieldsplit / LSC, ILU(1) | 7 | 992 s | 8.5 GB | 6.2073 | 0.0138 | 0.1718 |
+| `cylinder3d1z_bl.msh` extruded, 5 graded layers (prisms + boundary-layer hexahedra) | 164k | 4 MPI ranks, MUMPS, start from the scaled 2-D solution | 4 | 364 s | | 6.1702 | 0.0112 | 0.1656 |
 
 Reference 6.185 / 0.0094 / 0.1710.  In 3-D the factorisation dominates a
 Newton iteration (about 40 s of the 38 s per iteration at 81k unknowns,
@@ -200,3 +201,18 @@ cases on one machine.
 Newton from the Stokes start needs heavy damping on the first steps and
 on the cylinder-refined mesh stalls, where the pseudo-transient
 continuation takes over (three steps to |R| = 1e-5, then Newton).
+
+The extruded boundary-layer mesh (`examples/cylinder3d.py --extrude
+examples/meshes/cylinder3d1z_bl.msh --layers 5 --grading 1.5`: the 2-D
+cross-section with quadrilateral layers on the cylinder, 4.7k nodes,
+extruded into 18-node prisms and 27-node hexahedra with the layer thickness
+growing by 1.5 away from the two end walls) is the first 3-D mesh whose
+drag and pressure difference both sit inside the benchmark intervals, at
+164k unknowns, and its lift (0.0112) is the closest to the reference of
+any mesh so far.  Its Newton solve starts from the 2-D solution of the
+cross-section times the parabolic spanwise profile (the flag builds it):
+the residual starts 50x lower than from rest and four full Newton steps
+converge, whereas from rest the first step overshoots on the coarse inlet
+cells (the metric SUPG parameter at zero velocity is `h^2 / nu`, large
+there) and the line search fails, which the serial path survives by
+pseudo-transient continuation and the distributed path does not.
