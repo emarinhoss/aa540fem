@@ -105,3 +105,25 @@ def test_backend_selection(monkeypatch):
     assert assembly_backend("numba") == "numba"
     with pytest.raises(ValueError):
         assembly_backend("cuda")
+
+
+@pytest.mark.parametrize("element_length", ["metric", "streamline"])
+def test_spalart_allmaras_kernel_matches_numpy(element_length):
+    from aa540fem.turbulence.spalart_allmaras import SpalartAllmaras, SpalartAllmarasSolver
+
+    mesh = geometry(2.0, 1.0, 4, "quad9")
+    nu = 1e-4
+    solvers = [SpalartAllmarasSolver(mesh, SpalartAllmaras(nu), ["bottom"],
+                                     element_length=element_length, backend=b)
+               for b in ("numpy", "numba")]
+    for s in solvers:
+        s.set_velocity(1 - np.exp(-mesh.y / 0.2), 0.1 * np.sin(mesh.x) * mesh.y)
+    rng = np.random.default_rng(2)
+    nt = 3 * nu * (1 + mesh.y) + 0.5 * nu * rng.standard_normal(mesh.n_nodes)   # some negative
+    nt[mesh.bc_nodes["bottom"]] = 0.0
+    for supg in (False, True):
+        R0, J0 = solvers[0].residual_jacobian(nt, supg=supg)
+        R1, J1 = solvers[1].residual_jacobian(nt, supg=supg)
+        compare(R0, R1, 1e-11)
+        compare(J0, J1, 1e-10)
+    compare(solvers[0].M, solvers[1].M, 1e-14)

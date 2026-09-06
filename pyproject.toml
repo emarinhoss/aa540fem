@@ -19,6 +19,11 @@ dependencies = [
 mesh = ["meshio>=5"]
 amg = ["pyamg>=5"]
 meshgen = ["gmsh>=4.11"]
+numba = ["numba>=0.61"]
+petsc = ["petsc4py>=3.19", "mpi4py>=3.1"]
+mpi = ["mpi4py>=3.1", "pymetis>=2023.1"]
+hw = ["psutil>=5.9", "threadpoolctl>=3", "nvidia-ml-py>=12"]
+fast = ["numba>=0.61", "petsc4py>=3.19", "mpi4py>=3.1", "psutil>=5.9", "threadpoolctl>=3"]
 dev = ["pytest>=7", "ruff>=0.5"]
 
 [tool.setuptools.packages.find]

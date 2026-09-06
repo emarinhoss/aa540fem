@@ -126,7 +126,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     config = configure_from_args(args, interactive=False) if configure_from_args else None
 
-    header = f"{'case':8s} {'wall [s]':>9s} {'assembly':>9s} {'factorise':>10s} {'solve':>7s} {'other':>7s}  note"
+    header = (f"{'case':8s} {'wall [s]':>9s} {'assembly':>9s} {'factorise':>10s} "
+              f"{'solve':>7s} {'other':>7s}  note")
     lines = [header]
     for name in args.cases:
         wall, parts, note = run_case(name)
@@ -139,7 +140,8 @@ def main(argv=None):
         machine = f"{platform.processor() or platform.machine()}, {np.__version__} numpy"
         cfg = f", {config.describe()}" if config is not None else ""
         with open(doc, "a") as f:
-            f.write(f"\n### {args.record}\n\n{machine}{cfg}\n\n```\n" + "\n".join(lines) + "\n```\n")
+            f.write(f"\n### {args.record}\n\n{machine}{cfg}\n\n```\n"
+                    + "\n".join(lines) + "\n```\n")
         print(f"recorded in {doc}")
 
 

@@ -26,8 +26,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-import scipy.sparse as sp
 
+from aa540fem.backends import ScatterPlan, SparsityPattern, assembly_backend, scatter_vector
 from aa540fem.incompressible.space import _Block
 from aa540fem.linalg.continuation import pseudo_transient
 from aa540fem.linalg.newton import NewtonResult
@@ -115,27 +115,21 @@ class SpalartAllmarasSolver:
     """Steady SA equation on the velocity mesh for a frozen velocity field."""
 
     def __init__(self, mesh, model: SpalartAllmaras, wall_tags, order=None,
-                 element_length: str = "streamline"):
+                 element_length: str = "streamline", backend: str | None = None):
         self.mesh = mesh
         self.model = model
         self.element_length = element_length      # SUPG cell measure, as in FlowProblem
+        self.backend = assembly_backend(backend)
         self.N = mesh.n_nodes
         self.blocks = [_Block(mesh, name, conn, order) for name, conn in mesh.cells.items()]
         self.distance = mesh.wall_distance(wall_tags)
-        self.M = self._mass()
+        self.pattern = SparsityPattern.from_element_dofs(self.N, [b.conn for b in self.blocks])
+        self.plan = ScatterPlan(self.pattern,
+                                [self.pattern.scatter_map(b.conn, b.conn) for b in self.blocks])
+        self.M = self.pattern.matrix(self.plan.assemble(
+            [np.einsum("eq,qi,qj->eij", b.wh, b.phi, b.phi) for b in self.blocks]))
         self.u = np.zeros(self.N)
         self.v = np.zeros(self.N)
-
-    def _mass(self):
-        rows, cols, vals = [], [], []
-        for b in self.blocks:
-            Me = np.einsum("eq,qi,qj->eij", b.wh, b.phi, b.phi)
-            n = b.conn.shape[1]
-            rows.append(np.repeat(b.conn, n, axis=1).ravel())
-            cols.append(np.tile(b.conn, (1, n)).ravel())
-            vals.append(Me.ravel())
-        return sp.coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
-                             shape=(self.N, self.N)).tocsr()
 
     def set_velocity(self, u, v):
         self.u = np.asarray(u, dtype=float)
@@ -149,11 +143,29 @@ class SpalartAllmarasSolver:
         residual (the diffusion part is omitted).  Source and diffusivity
         derivatives are central finite differences at the quadrature points.
         """
-        m = self.model
         nt = np.asarray(nu_tilde, dtype=float)
         R = np.zeros(self.N)
-        rows, cols, vals = [], [], []
-        for b in self.blocks:
+        J_e = []
+        if self.backend == "numba":
+            from aa540fem.backends.numba_sa import constants, sa_local
+
+            c = constants(self.model, FD_STEP)
+            metric = self.element_length == "metric"
+            for b in self.blocks:
+                Re_, Je = sa_local(b, nt, self.u, self.v, self.distance, c, supg, metric)
+                R += scatter_vector(self.N, b.conn, Re_)
+                J_e.append(Je)
+        else:
+            for b in self.blocks:
+                Re_, Je = self._local_numpy(b, nt, supg)
+                R += scatter_vector(self.N, b.conn, Re_)
+                J_e.append(Je)
+        return R, self.pattern.matrix(self.plan.assemble(J_e, backend=self.backend))
+
+    def _local_numpy(self, b, nt, supg):
+        """Element residual ``(ne, n)`` and Jacobian ``(ne, n, n)`` (NumPy reference)."""
+        m = self.model
+        if True:
             conn = b.conn
             nte = nt[conn]
             ntq = nte @ b.phi.T
@@ -214,14 +226,7 @@ class SpalartAllmarasSolver:
                 Re_ = Re_ + np.einsum("eq,eqi->ei", wh * (conv - s), w_i)
                 Je = Je + np.einsum("eq,eqi,eqj->eij", wh, w_i, ugrad - dS)
 
-            np.add.at(R, conn.ravel(), Re_.ravel())
-            n = conn.shape[1]
-            rows.append(np.repeat(conn, n, axis=1).ravel())
-            cols.append(np.tile(conn, (1, n)).ravel())
-            vals.append(Je.ravel())
-        J = sp.coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
-                          shape=(self.N, self.N)).tocsr()
-        return R, J
+            return Re_, Je
 
     def solve(self, nu_tilde0, fixed, values, method="direct", rtol=1e-6, atol=1e-30,
               dtau0=1.0, max_steps=200, inner_newton=6, verbose=False,
@@ -239,6 +244,6 @@ class SpalartAllmarasSolver:
         if local_timestep:
             h = self.mesh.nodal_size("max")           # streamwise (convective) cell scale
             umag = np.maximum(np.hypot(self.u, self.v), 1e-3)
-            M = (sp.diags(umag / h) @ self.M).tocsr()
+            M = self.pattern.matrix(self.M.data * (umag / h)[self.pattern.rows])
         return pseudo_transient(self.residual_jacobian, nt, fixed, M, method, rtol, atol,
                                 dtau0, max_steps, inner_newton=inner_newton, verbose=verbose)

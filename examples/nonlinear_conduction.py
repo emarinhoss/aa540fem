@@ -20,6 +20,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from aa540fem import DIRICHLET, Problem, error_norms, solve  # noqa: E402
+from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 
 
 def main(argv=None):
@@ -29,7 +30,10 @@ def main(argv=None):
     parser.add_argument("--elem-type", default="quad9")
     parser.add_argument("--picard", action="store_true", help="fixed-point instead of Newton")
     parser.add_argument("--no-plot", action="store_true")
+    add_run_arguments(parser)
     args = parser.parse_args(argv)
+    config = configure_from_args(args)
+    print(f"run configuration: {config.describe()}")
 
     beta = args.beta
     exact = lambda x, y: (np.sqrt(1.0 + beta * (2.0 + beta) * x) - 1.0) / beta

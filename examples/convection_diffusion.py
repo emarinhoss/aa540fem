@@ -20,6 +20,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from aa540fem import DIRICHLET, Problem, solve  # noqa: E402
+from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 
 
 def main(argv=None):
@@ -28,7 +29,10 @@ def main(argv=None):
     parser.add_argument("--elems", type=int, default=10)
     parser.add_argument("--elem-type", default="quad")
     parser.add_argument("--no-plot", action="store_true")
+    add_run_arguments(parser)
     args = parser.parse_args(argv)
+    config = configure_from_args(args)
+    print(f"run configuration: {config.describe()}")
 
     eps = args.eps
     exact = lambda x, y: np.expm1(x / eps) / np.expm1(1.0 / eps)

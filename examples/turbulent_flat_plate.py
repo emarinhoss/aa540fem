@@ -35,6 +35,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from aa540fem import read_mesh  # noqa: E402
+from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 from aa540fem.incompressible import FlowProblem  # noqa: E402
 from aa540fem.turbulence import solve_rans  # noqa: E402
 
@@ -112,7 +113,10 @@ def main(argv=None):
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument("-v", "--verbose", action="count", default=1,
                         help="-v: outer iterations (default), -vv: also the sub-solves")
+    add_run_arguments(parser)
     args = parser.parse_args(argv)
+    config = configure_from_args(args)
+    print(f"run configuration: {config.describe()}")
     outdir = pathlib.Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 

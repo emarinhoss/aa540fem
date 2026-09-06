@@ -20,6 +20,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from aa540fem import DIRICHLET, Problem, error_norms, geometry, solve_transient  # noqa: E402
+from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 
 
 def main(argv=None):
@@ -31,7 +32,10 @@ def main(argv=None):
     parser.add_argument("--scheme", default="rk45", choices=["rk45", "theta"])
     parser.add_argument("--series", default="hill", help="prefix of the .vtu/.pvd output")
     parser.add_argument("--no-plot", action="store_true")
+    add_run_arguments(parser)
     args = parser.parse_args(argv)
+    config = configure_from_args(args)
+    print(f"run configuration: {config.describe()}")
 
     sigma = args.sigma
     hill = lambda x, y: np.exp(-((x - 0.5) ** 2 + y ** 2) / (2 * sigma ** 2))

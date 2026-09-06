@@ -27,6 +27,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from aa540fem import DIRICHLET, ELEMENTS, Problem, error_norms, solve, solve_transient  # noqa: E402
+from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 
 A, B = 2.0, 3.0
 
@@ -93,7 +94,10 @@ def main(argv=None):
     parser.add_argument("--transient", action="store_true",
                         help="temporal convergence of backward Euler and Crank-Nicolson")
     parser.add_argument("--dts", type=float, nargs="+", default=[0.005, 0.0025, 0.00125, 0.000625])
+    add_run_arguments(parser)
     args = parser.parse_args(argv)
+    config = configure_from_args(args)
+    print(f"run configuration: {config.describe()}")
 
     if args.transient:
         run_transient(args.dts)

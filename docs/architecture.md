@@ -92,6 +92,15 @@ discontinuous Galerkin discretisation on the same `Mesh`, `elements` and
 `timestepping` layers (explicit RK is the standard choice there).
 
 **Iterative solvers for large cases.**  Block preconditioning for the
-saddle-point system (pressure Schur complement approximations) in
-`linalg/solvers.py` is what lifts the direct-solver limit of roughly
-10^5 unknowns.
+saddle-point system (pressure Schur complement approximations) is what
+lifts the direct-solver limit of roughly 10^5 unknowns; `linalg/krylov.py`
+holds the PETSc fieldsplit version.
+
+**Performance layers** (see `docs/parallel.md`): `backends/pattern.py`
+(fixed sparsity pattern, deterministic scatter), `backends/numpy_kernels.py`
+and `backends/numba_kernels.py` / `numba_sa.py` (element kernels, the
+NumPy ones being the reference), `linalg/direct.py` (SuperLU / PETSc-MUMPS
+factorisations), `hardware.py` and `cli.py` (probe, run configuration, the
+50 % / 100 % prompt), `parallel/` (MPI).  Physics modules never import a
+backend; they take element-local arrays from a kernel and scatter them, so
+a GPU or distributed backend plugs in below them.

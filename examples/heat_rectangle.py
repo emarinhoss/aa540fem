@@ -20,6 +20,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from aa540fem import Problem, solve  # noqa: E402
+from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 
 # ---------------------------------------------------------------- User inputs
 a = 4.0            # horizontal length of the domain
@@ -103,7 +104,10 @@ def main(argv=None):
     parser.add_argument("--output", "-o", default="temperature.png",
                         help="file for the contour plot ('' to skip)")
     parser.add_argument("--show", action="store_true", help="open an interactive window")
+    add_run_arguments(parser)
     args = parser.parse_args(argv)
+    config = configure_from_args(args)
+    print(f"run configuration: {config.describe()}")
 
     solution = solve(build_problem(args.mesh), verbose=True, method=args.method)
     print(f"T in [{solution.T.min():.6g}, {solution.T.max():.6g}]")

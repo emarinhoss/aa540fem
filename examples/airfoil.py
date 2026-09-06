@@ -36,6 +36,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from aa540fem import read_mesh  # noqa: E402
+from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 from aa540fem.incompressible import FlowProblem, solve_flow, solve_flow_transient  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -84,7 +85,10 @@ def main(argv=None):
     parser.add_argument("--steady", action=argparse.BooleanOptionalAction, default=True,
                         help="finish with a steady Newton solve from the transient state")
     parser.add_argument("--no-plot", action="store_true")
+    add_run_arguments(parser)
     args = parser.parse_args(argv)
+    config = configure_from_args(args)
+    print(f"run configuration: {config.describe()}")
 
     outdir = pathlib.Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)

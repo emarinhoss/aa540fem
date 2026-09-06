@@ -293,6 +293,40 @@ an indefinite saddle-point matrix, so the direct solver is used; a
 continuation in Reynolds number is done by passing a previous `sol.U` as
 `U0` (see `examples/cavity.py`).
 
+### Running faster
+
+Every example takes the run-configuration flags of `aa540fem.cli`
+(`--machine {50,100}`, `--threads N`, `--assembly {numpy,numba}`,
+`--direct {superlu,petsc}`, `--linear {scipy,petsc,petsc-cuda}`,
+`--memory-budget GB`, `--no-prompt`); on a terminal the script prints what
+the machine offers and asks once whether to use 50 % or 100 % of it.
+`python -m aa540fem.cli` prints the probe, and `AA540FEM_*` environment
+variables set the same choices for batch jobs.
+
+```
+pip install -e ".[numba]"     # threaded element assembly (numba)
+pip install -e ".[petsc]"     # petsc4py + mpi4py: MUMPS factorisations, MPI, Krylov solver
+pip install -e ".[fast]"      # both, plus psutil/threadpoolctl for the probe
+```
+
+The solver assembles every matrix on one fixed sparsity pattern, assembles
+residuals only where no Jacobian is needed (Runge-Kutta stages, Newton
+trial points), runs the element kernels in numba threads and factorises
+with MUMPS when PETSc is installed.  Wall times on a 4-core machine
+(details in [`docs/performance.md`](docs/performance.md)):
+
+| case | before | after |
+|---|---|---|
+| theta scheme, 20 steps, cylinder mesh | 73 s | 29 s (SuperLU) |
+| RK45, 20 steps, cylinder mesh | 44 s | 7 s |
+| steady Newton, cylinder mesh | 9.1 s | 9.6 s (factorisation-bound; MUMPS lifts this) |
+
+[`docs/parallel.md`](docs/parallel.md) explains which option fits which
+machine, and what the MPI (`aa540fem.parallel`, replicated assembly with a
+distributed MUMPS factorisation, plus a METIS domain-decomposition
+prototype) and GPU (PETSc Krylov path with `--linear petsc-cuda`) routes
+are.
+
 ## Modules
 
 | Module | Contents | MATLAB origin |

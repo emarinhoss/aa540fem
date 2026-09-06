@@ -19,6 +19,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from aa540fem import geometry  # noqa: E402
+from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 from aa540fem.incompressible import FlowProblem, solve_flow  # noqa: E402
 
 GHIA = {   # Re: (u_min on x = 0.5, y of u_min, v_max on y = 0.5, v_min on y = 0.5)
@@ -34,7 +35,10 @@ def main(argv=None):
     parser.add_argument("--elems", type=int, default=32)
     parser.add_argument("--vtk", default="cavity.vtu")
     parser.add_argument("--no-plot", action="store_true")
+    add_run_arguments(parser)
     args = parser.parse_args(argv)
+    config = configure_from_args(args)
+    print(f"run configuration: {config.describe()}")
 
     mesh = geometry(1.0, 1.0, args.elems, "quad9")
     walls = {s: (0.0, 0.0) for s in ("left", "right", "bottom")}

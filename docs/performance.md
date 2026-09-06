@@ -22,3 +22,15 @@ theta        32.38     10.57      20.24    0.00    1.57  20 steps
 rk45          8.45      4.55       1.63    0.00    2.27  20 steps
 rans         27.38      3.62      16.07    0.00    7.69  2 outer it.
 ```
+
+### Phase 3: numba assembly kernels, 4 threads (SuperLU)
+
+x86_64, 2.4.6 numpy
+
+```
+case      wall [s]  assembly  factorise   solve   other  note
+steady        9.56      0.77       5.70    0.00    3.09  6 Newton it.
+theta        29.24      4.37      20.88    0.00    4.00  20 steps
+rk45          7.16      0.98       1.72    0.00    4.46  20 steps
+rans         26.02      1.11      15.58    0.00    9.33  2 outer it.
+```

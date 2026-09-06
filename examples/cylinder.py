@@ -22,6 +22,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from aa540fem import read_mesh  # noqa: E402
+from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 from aa540fem.incompressible import FlowProblem, solve_flow  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -56,7 +57,10 @@ def main(argv=None):
     parser.add_argument("--umax", type=float, default=0.3)
     parser.add_argument("--vtk", default="cylinder.vtu")
     parser.add_argument("--no-plot", action="store_true")
+    add_run_arguments(parser)
     args = parser.parse_args(argv)
+    config = configure_from_args(args)
+    print(f"run configuration: {config.describe()}")
 
     sol, res = run(args.mesh, args.umax)
     print(f"Re = {res['Re']:.1f}: {sol.mesh.n_nodes} nodes, {sol.mesh.n_elems} elements, "

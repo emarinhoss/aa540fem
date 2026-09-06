@@ -20,6 +20,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
 from aa540fem import DIRICHLET, Problem, error_norms, read_mesh, solve  # noqa: E402
+from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 MESHES = HERE / "meshes"
@@ -40,7 +41,10 @@ def main(argv=None):
     parser.add_argument("--method", default="direct", choices=["direct", "cg"])
     parser.add_argument("--vtk", default="annulus.vtu")
     parser.add_argument("--no-plot", action="store_true")
+    add_run_arguments(parser)
     args = parser.parse_args(argv)
+    config = configure_from_args(args)
+    print(f"run configuration: {config.describe()}")
 
     mesh = read_mesh(args.mesh)
     problem = Problem(mesh=mesh,
