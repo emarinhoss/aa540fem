@@ -8,25 +8,29 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
+from aa540fem.linalg.direct import factorise
+
 
 class LinearSolver:
     """Direct or preconditioned Krylov solver for repeated solves with one matrix.
 
-    ``method``: ``"direct"`` (sparse LU, factorised once), ``"cg"`` (symmetric
-    systems only) or ``"gmres"``; the Krylov methods use pyamg smoothed
-    aggregation as preconditioner when available, otherwise Jacobi (cg) or
-    incomplete LU (gmres).
+    ``method``: ``"direct"`` (sparse LU, factorised once; ``backend`` selects
+    SuperLU or PETSc/MUMPS, see :mod:`aa540fem.linalg.direct`), ``"cg"``
+    (symmetric systems only) or ``"gmres"``; the Krylov methods use pyamg
+    smoothed aggregation as preconditioner when available, otherwise Jacobi
+    (cg) or incomplete LU (gmres).
     """
 
     def __init__(self, A, method: str = "direct", tol: float = 1e-10, maxiter=None,
-                 symmetric: bool = True):
+                 symmetric: bool = True, backend: str | None = None):
         self.method = method
         self.tol = tol
         self.maxiter = maxiter
         self.A = sp.csr_matrix(A)
         self.precond = None
         if method == "direct":
-            self.lu = spla.splu(self.A.tocsc())
+            self.lu = factorise(self.A, backend)
+            self.backend = self.lu.backend
         elif method == "cg":
             if not symmetric:
                 raise ValueError("cg needs a symmetric system; use method='gmres' "
@@ -59,7 +63,7 @@ class LinearSolver:
     def solve(self, F, verbose: bool = False):
         F = np.asarray(F, dtype=float)
         if self.method == "direct":
-            return self.lu.solve(F), {"method": "direct"}
+            return self.lu.solve(F), {"method": "direct", "backend": self.backend}
 
         count = [0]
 

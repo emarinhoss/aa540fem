@@ -5,11 +5,11 @@ projected explicit Runge-Kutta) or the theta-method with Newton per step.
 from __future__ import annotations
 
 import numpy as np
-import scipy.sparse.linalg as spla
 
 from aa540fem.incompressible.assembler import FlowAssembler
 from aa540fem.incompressible.problem import SCHEMES, FlowProblem, values_at_pair
 from aa540fem.incompressible.solution import FlowSolution, TransientFlowSolution
+from aa540fem.linalg.direct import factorise
 from aa540fem.linalg.dirichlet import eliminate
 from aa540fem.linalg.newton import newton_iterate
 from aa540fem.timestepping.rk import rk45
@@ -169,7 +169,7 @@ def _solve_flow_transient_rk45(problem, dt, t_end, U0, store_every, verbose, cal
     is_pressure = fixed >= 2 * N
     fixed_vel = fixed[~is_pressure]
     elim = eliminate(P, fixed)
-    lu = spla.splu(elim.K_bc.tocsc())
+    lu = factorise(elim.K_bc)
     zero_rate = np.zeros(fixed.size)
 
     def fixed_values(t):

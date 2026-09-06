@@ -11,10 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-import scipy.sparse.linalg as spla
 
 from aa540fem.core.mesh import Mesh
 from aa540fem.core.util import values_at
+from aa540fem.linalg.direct import factorise
 from aa540fem.linalg.dirichlet import DirichletEliminator
 from aa540fem.linalg.newton import newton_iterate
 from aa540fem.linalg.solvers import LinearSolver
@@ -207,7 +207,7 @@ def _solve_transient_rk45(problem, mesh, dt, t_end, T0, store_every, verbose,
     M = ops0.M.tocsr()
     M_ff = M[free][:, free].tocsc()
     M_fD = M[free][:, nodes].tocsr()
-    lu = spla.splu(M_ff)
+    lu = factorise(M_ff)
     F0 = neumann_loads(mesh, ops0.F, bc_type, bc_val, 0.0)
     zero_rate = np.zeros(nodes.size)
 
