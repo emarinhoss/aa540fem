@@ -3,7 +3,8 @@
 Requires the ``gmsh`` Python package (``pip install gmsh``).  Writes the
 annulus meshes ``annulus_tri.msh``, ``annulus_tri6.msh``, ``annulus_quad.msh``,
 ``annulus_quad9.msh``, the cylinder-in-channel mesh ``cylinder_tri6.msh`` (and
-its boundary-layer variant ``cylinder_bl.msh``), the flat-plate mesh
+its boundary-layer variants ``cylinder_bl.msh`` and the twice-finer
+``cylinder_bl_fine.msh``), the flat-plate mesh
 ``flat_plate_bl.msh`` and the NACA 0012 far-field mesh
 ``airfoil_naca0012_a5_tri6.msh`` next to this file.  The ``_bl`` meshes use
 Gmsh's boundary-layer field, which extrudes quadrilaterals from the wall
@@ -43,13 +44,16 @@ def _boundary_layer(curves, size_wall, ratio, thickness, quads=True):
 
 
 def make(name: str, order: int, quads: bool, geo: pathlib.Path = HERE / "annulus.geo",
-         boundary_layer=None):
+         boundary_layer=None, size_factor: float = 1.0):
     """Mesh a ``.geo`` file.  ``boundary_layer=(curves, size, ratio, thickness)``
-    adds a quadrilateral boundary layer on those curve tags."""
+    adds a quadrilateral boundary layer on those curve tags; ``size_factor``
+    scales every mesh size of the file (``Mesh.MeshSizeFactor``), e.g. 0.5
+    for a uniformly twice-finer mesh."""
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.open(str(geo))
+        gmsh.option.setNumber("Mesh.MeshSizeFactor", size_factor)
         if boundary_layer is not None:
             _boundary_layer(*boundary_layer)
         if quads:
@@ -265,6 +269,8 @@ if __name__ == "__main__":
         print("wrote", make(name, order, quads, HERE / geo))
     print("wrote", make("cylinder_bl", 2, False, HERE / "cylinder.geo",
                         boundary_layer=([5, 6, 7, 8], 0.0015, 1.2, 0.012)))
+    print("wrote", make("cylinder_bl_fine", 2, False, HERE / "cylinder.geo",
+                        boundary_layer=([5, 6, 7, 8], 0.0008, 1.15, 0.012), size_factor=0.5))
     print("wrote", make_flat_plate())
     print("wrote", make_turbulent_flat_plate())
     print("wrote", make_airfoil())
