@@ -306,8 +306,9 @@ Comparisons:
 
 Start-up with the viscosity ramp 100, 10, 1: the three stages take 5, 6 and
 11 outer iterations; every flow solve after the first converges with plain
-Newton in 2 to 5 iterations and the whole case runs in 9 minutes (23k nodes,
-direct solver, one core).  The final eddy viscosity reaches `nu_t / nu` of
+Newton in 2 to 5 iterations and the whole case runs in 4 minutes with the
+numba kernels and the MUMPS factorisation (9 minutes with NumPy and
+SuperLU; 23k nodes, one 4-core machine).  The final eddy viscosity reaches `nu_t / nu` of
 about 200 in the wake at the outlet.
 
 Skin friction along the plate (window 3e5 < Re_x < 2e6, i.e. the last 85 %
@@ -332,9 +333,9 @@ without trip term starts laminar: the computed `Cf` follows Blasius up to
 given `x` is not that of the correlations.  The comparison that removes
 this dependence on the origin is the Coles-Fernholz law at the momentum
 thickness Reynolds number of the computed profile: at `x = 1.5` the profile
-gives `Re_theta = 2885` and `Cf = 0.00326` against the Coles-Fernholz
+gives `Re_theta = 2885` and `Cf = 0.00327` against the Coles-Fernholz
 value `2 [ln(Re_theta)/0.384 + 4.127]^(-2) = 0.00323` (Nagib, Chauhan and
-Monkewitz [11]), a difference of 1 %.
+Monkewitz [11]), a difference of 1.2 %.
 
 Law of the wall at `x = 1.5` (`u_tau = 0.0404`, first node at `y+ = 0.40`,
 62 nodes across the layer): the viscous sublayer sits on `u+ = y+`; in the

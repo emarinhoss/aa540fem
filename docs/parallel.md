@@ -100,9 +100,9 @@ already off the critical path after step 3) and the sparse matrix-vector
 products of an iterative solver.  It does not help the sparse LU, which is
 what the solver relies on today.  The GPU path is therefore the PETSc
 Krylov solver of `linalg/krylov.py`: flexible GMRES with a block
-(fieldsplit) preconditioner, the velocity block preconditioned by algebraic
-multigrid and the pressure Schur complement by a scaled pressure mass
-matrix.  `--linear petsc-cuda` switches PETSc's matrix and vector types to
+(fieldsplit) preconditioner, the velocity block preconditioned by ILU or
+algebraic multigrid (GAMG) and the pressure Schur complement by the
+viscosity-scaled pressure mass matrix (`solve_flow(method="fieldsplit")`).  `--linear petsc-cuda` switches PETSc's matrix and vector types to
 `aijcusparse`/`cuda`, which PETSc detects at build time; the probe reports
 whether the installed PETSc has CUDA and whether a device is present, and
 the corresponding tests skip where it is not.  Assembly stays on the CPU;
