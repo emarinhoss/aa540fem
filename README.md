@@ -232,8 +232,8 @@ tests).
 `continuation="ptc"` (or the `"auto"` fallback, which restarts from the
 best Newton iterate) solves backward-Euler pseudo-time steps with a few
 Newton iterations each and grows the step by switched evolution
-relaxation; the step is local (scaled by the cell time scale, so `dtau0`
-is a CFL number) and starts from the divergence-free projection of the
+relaxation; the step is local (scaled by the convective time scale of the
+surrounding cells, so `dtau0` is a CFL number) and starts from the divergence-free projection of the
 initial velocity.  It is what makes the laminar flat plate at Re 1e5
 converge from rest (10 pseudo-time steps), where plain Newton diverges.  Boundary-layer
 meshes (quadrilaterals extruded from the wall inside a triangular mesh)

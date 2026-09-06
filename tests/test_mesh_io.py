@@ -72,6 +72,16 @@ def test_boundary_faces_of_structured_mesh():
     assert set(map(tuple, np.sort(faces, axis=1))) == set(map(tuple, np.sort(tagged, axis=1)))
 
 
+def test_nodal_size_follows_the_thin_and_the_long_cell_dimension():
+    mesh = geometry(2.0, 1.0, 4, "quad9")           # cells 0.5 x 0.25
+    assert np.allclose(mesh.nodal_size(), 0.25)
+    assert np.allclose(mesh.nodal_size("max"), 0.5)
+    tri = geometry(2.0, 1.0, 4, "triangle6")
+    assert np.all(tri.nodal_size("max") >= tri.nodal_size("min"))
+    with pytest.raises(ValueError):
+        mesh.nodal_size("mean")
+
+
 def test_unknown_tag_lists_available_tags():
     with pytest.raises(ValueError, match="inner"):
         solve(Problem(mesh=read_mesh(ANNULUS["tri"]), bc_type={"top": 0}, bc_val={"top": 0.0}))

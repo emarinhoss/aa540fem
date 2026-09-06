@@ -244,11 +244,16 @@ offers three devices, all used by the validation case:
   weakly on the Reynolds number;
 - **local pseudo-time stepping** in both continuations
   (`solve_flow(local_timestep=True)`, `SpalartAllmarasSolver.solve(local_timestep=True)`):
-  the pseudo-time step of every node is scaled by its cell time scale
-  `h / (U + nu / h)` (`Mesh.nodal_size`), so `dtau0` is a CFL-like number
-  and the thin wall cells and the coarse far field advance at their own
-  pace; without it the global step is dictated by the wall cells and the
-  far field never moves.
+  the pseudo-time step of every node is scaled by its convective time scale
+  `h / U` with `h` the longest edge of the surrounding cells
+  (`Mesh.nodal_size("max")`), so `dtau0` is a CFL number and the wall cells
+  and the coarse far field advance at their own pace.  The choice of `h`
+  matters on stretched cells: with a global step the far field never
+  moves, and with the thin dimension of the wall cells (their viscous
+  scale) the corrections at the leading edge need thousands of steps to
+  convect along the plate, so the residual crawled at one per cent per
+  step; with the streamwise dimension the second ramp stage converges in
+  11 pseudo-time steps.  The implicit steps do not need the viscous limit.
 
 The pseudo-transient continuation of the flow also projects its starting
 velocity onto the discretely divergence-free space (the saddle-point

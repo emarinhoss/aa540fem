@@ -20,14 +20,19 @@ from aa540fem.linalg.solvers import LinearSolver
 CONTINUATIONS = ("auto", "newton", "ptc")
 
 
-def local_pseudo_time_scaling(mesh, nu, u_ref=1.0):
-    """Nodal pseudo-time scale ``h / (u_ref + nu / h)`` with ``h`` the local
-    mesh size: the local convective-diffusive time scale of each cell.  With
-    it a pseudo-time step is a CFL-like number rather than a time, so the
-    thin wall cells of a boundary-layer mesh and the coarse far field advance
-    at their own pace (standard local time stepping)."""
-    h = mesh.nodal_size()
-    return h / (u_ref + nu / h)
+def local_pseudo_time_scaling(mesh, nu, u_ref):
+    """Local pseudo-time scale of every node: ``h / u_ref`` with the longest
+    edge ``h`` of the surrounding cells (``Mesh.nodal_size("max")``).
+
+    The pseudo-time step of a node is ``dtau`` times this, so ``dtau`` is a
+    CFL number and every cell advances at its own convective pace: with a
+    global step the far field never moves, and with the thin dimension of
+    stretched cells (the viscous scale) a boundary layer needs thousands of
+    steps to convect the corrections of one cell to the next; the implicit
+    steps do not need the viscous limit.  ``nu`` is accepted for interface
+    stability and unused.
+    """
+    return mesh.nodal_size("max") / max(u_ref, 1e-12)
 
 
 def project_divergence_free(asm: FlowAssembler, U, fixed, vals):
@@ -68,8 +73,8 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
     continuation, see :func:`pseudo_transient`) or ``"auto"`` (Newton, and
     PTC from the initial state if Newton does not converge or stalls).  With
     ``local_timestep`` (default) the pseudo-time step is scaled by the local
-    cell time scale (:func:`local_pseudo_time_scaling`) and ``dtau0`` is a
-    CFL-like number; otherwise it is a global time.  Pass ``U0`` (a previous
+    convective time scale (:func:`local_pseudo_time_scaling`) and ``dtau0``
+    is a CFL number; otherwise it is a global time.  Pass ``U0`` (a previous
     ``FlowSolution.U``) for continuation in Reynolds number.  ``method``
     should be ``"direct"``: the saddle-point Jacobian is indefinite.
     """

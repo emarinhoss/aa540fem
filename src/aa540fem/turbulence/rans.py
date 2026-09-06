@@ -73,6 +73,8 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                   wall-resolved meshes.
     flow_options : extra keyword arguments for :func:`solve_flow`
                   (e.g. ``dtau0`` of the pseudo-transient continuation).
+    verbose     : print one line per outer iteration; ``verbose=2`` also
+                  prints the Newton / pseudo-time history of the sub-solves.
     """
     wall_tags = [wall_tags] if isinstance(wall_tags, str) else list(wall_tags)
     if viscosity_ramp[-1] != 1.0:
@@ -132,7 +134,8 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
     nt[fixed_nodes] = fixed_vals
     nu_t = model.eddy_viscosity(nt)
     problem.eddy_viscosity = problem.rho * nu_t
-    flow = solve_flow(problem, U0=U0, continuation="auto", verbose=False, **flow_options)
+    inner = bool(verbose) and int(verbose) >= 2
+    flow = solve_flow(problem, U0=U0, continuation="auto", verbose=inner, **flow_options)
     if verbose:
         print(f"RANS start: flow {flow.info['continuation']} in "
               f"{flow.info['iterations']} iterations")
@@ -141,14 +144,14 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
     converged = False
     for k in range(1, max_outer + 1):
         sa.set_velocity(flow.u, flow.v)
-        res = sa.solve(nt, fixed_nodes, fixed_vals, rtol=1e-4, verbose=False)
+        res = sa.solve(nt, fixed_nodes, fixed_vals, rtol=1e-4, verbose=inner)
         nt_new = res.T
         nt = relax * nt_new + (1.0 - relax) * nt
         nu_t_new = model.eddy_viscosity(nt)
         change = np.linalg.norm(nu_t_new - nu_t) / max(np.linalg.norm(nu_t_new), 1e-300)
         nu_t = nu_t_new
         problem.eddy_viscosity = problem.rho * nu_t
-        flow = solve_flow(problem, U0=flow.U, continuation="auto", verbose=False, **flow_options)
+        flow = solve_flow(problem, U0=flow.U, continuation="auto", verbose=inner, **flow_options)
         force = flow.forces(force_tag)
         history.append((k, change, force, res.iterations, res.converged, flow.info["iterations"]))
         if verbose:

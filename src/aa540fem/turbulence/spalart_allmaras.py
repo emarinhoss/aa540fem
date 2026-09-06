@@ -237,9 +237,8 @@ class SpalartAllmarasSolver:
         nt[fixed] = values
         M = self.M
         if local_timestep:
-            h = self.mesh.nodal_size()
+            h = self.mesh.nodal_size("max")           # streamwise (convective) cell scale
             umag = np.maximum(np.hypot(self.u, self.v), 1e-3)
-            scale = h / (umag + self.model.nu / h)
-            M = (sp.diags(1.0 / scale) @ self.M).tocsr()
+            M = (sp.diags(umag / h) @ self.M).tocsr()
         return pseudo_transient(self.residual_jacobian, nt, fixed, M, method, rtol, atol,
                                 dtau0, max_steps, inner_newton=inner_newton, verbose=verbose)

@@ -179,25 +179,30 @@ class Mesh:
                 tris.append(conn[:, [0, 2, 3]])
         return np.vstack(tris)
 
-    def nodal_size(self) -> np.ndarray:
-        """Smallest corner-edge length among the elements touching each node.
+    def nodal_size(self, reduce: str = "min") -> np.ndarray:
+        """Corner-edge length of the elements touching each node.
 
-        A local length scale for pseudo-time stepping on anisotropic
-        (boundary-layer) meshes: it follows the thin dimension of stretched
-        cells.
+        ``reduce="min"``: the shortest edge, i.e. the thin dimension of
+        stretched boundary-layer cells (the viscous length scale);
+        ``reduce="max"``: the longest edge, their streamwise dimension (the
+        convective length scale, which sets the local pseudo-time step of an
+        implicit continuation: a step limited by the thin dimension needs
+        thousands of steps to convect anything along a boundary layer).
         """
-        h = np.full(self.n_nodes, np.inf)
+        if reduce not in ("min", "max"):
+            raise ValueError("reduce must be 'min' or 'max'")
+        pick = np.minimum if reduce == "min" else np.maximum
+        h = np.full(self.n_nodes, np.inf if reduce == "min" else 0.0)
         for name, conn in self.cells.items():
             el = get_element(name)
             nc = el.n_corners
             corners = conn[:, :nc]
-            lengths = np.full(conn.shape[0], np.inf)
+            lengths = np.full(conn.shape[0], np.inf if reduce == "min" else 0.0)
             for i in range(nc):
                 a, b = corners[:, i], corners[:, (i + 1) % nc]
-                lengths = np.minimum(lengths, np.linalg.norm(self.points[a] - self.points[b],
-                                                             axis=1))
+                lengths = pick(lengths, np.linalg.norm(self.points[a] - self.points[b], axis=1))
             for j in range(conn.shape[1]):
-                np.minimum.at(h, conn[:, j], lengths)
+                pick.at(h, conn[:, j], lengths)
         return h
 
     def wall_distance(self, tags) -> np.ndarray:
