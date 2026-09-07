@@ -157,13 +157,14 @@ def make_turbulent_flat_plate(name: str = "flat_plate_turb"):
                            lc_edge=2e-4)
 
 
-def make_turbulent_flat_plate_coarse(name: str = "flat_plate_turb_coarse"):
-    """The turbulent plate with the same 2e-5 wall cell but a coarser streamwise
-    spacing (a third of the nodes): ``examples/turbulent_flat_plate.py --extrude``
-    extrudes it into a 3-D wall-resolved mesh that a direct solver still fits."""
-    return make_flat_plate(name=name, x0=-0.5, x1=2.5, plate=2.0, height=1.0, lc=0.2,
-                           lc_plate=0.05, size_wall=2e-5, ratio=1.35, thickness=0.06,
-                           lc_edge=5e-4)
+def make_turbulent_flat_plate_medium(name: str = "flat_plate_turb_medium"):
+    """The turbulent plate with the same wall-normal layers (2e-5 first cell,
+    ratio 1.25) and edge refinement but a coarser streamwise spacing (12.8k
+    nodes against 23k): ``examples/turbulent_flat_plate.py --extrude`` extrudes
+    it into a 3-D wall-resolved mesh that a direct solver still fits."""
+    return make_flat_plate(name=name, x0=-0.5, x1=2.5, plate=2.0, height=1.0, lc=0.15,
+                           lc_plate=0.035, size_wall=2e-5, ratio=1.25, thickness=0.06,
+                           lc_edge=2e-4)
 
 
 def naca4(code: str = "0012", n: int = 100, chord: float = 1.0):
@@ -376,7 +377,7 @@ if __name__ == "__main__":
                         boundary_layer=([5, 6, 7, 8], 0.002, 1.25, 0.012), size_factor=1.6))
     print("wrote", make_flat_plate())
     print("wrote", make_turbulent_flat_plate())
-    print("wrote", make_turbulent_flat_plate_coarse())
+    print("wrote", make_turbulent_flat_plate_medium())
     print("wrote", make_airfoil())
     print("wrote", make_box_tet10())
     print("wrote", make_cylinder3d())
