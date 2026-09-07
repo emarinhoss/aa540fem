@@ -145,9 +145,20 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
 
     history = []
     converged = False
+    sa_atol = None
     for k in range(1, max_outer + 1):
         sa.set_velocity(*flow.velocity)
-        res = sa.solve(nt, fixed_nodes, fixed_vals, rtol=1e-4, verbose=inner)
+        if sa_atol is None:
+            # absolute target of the SA solves: 1e-4 of the residual of the
+            # freestream start with this velocity, so that a start near the
+            # solution (the previous outer iteration, a solution copied from a
+            # related mesh) is not asked for 1e-4 of an already small residual
+            free = np.full(mesh.n_nodes, nt_inf)
+            free[fixed_nodes] = fixed_vals
+            r_free = sa.residual_jacobian(free)[0]
+            r_free[fixed_nodes] = 0.0
+            sa_atol = 1e-4 * np.linalg.norm(r_free)
+        res = sa.solve(nt, fixed_nodes, fixed_vals, rtol=1e-4, atol=sa_atol, verbose=inner)
         nt_new = res.T
         nt = relax * nt_new + (1.0 - relax) * nt
         nu_t_new = model.eddy_viscosity(nt)
