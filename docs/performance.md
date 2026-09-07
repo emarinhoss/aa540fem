@@ -105,6 +105,7 @@ Krylov section below).
 | case | before | after | result |
 |---|---|---|---|
 | turbulent flat plate, Re 1e6 (`turbulent_flat_plate.py`) | 9 min | 4 min | Cf 0.00327 vs Coles-Fernholz 0.00323, unchanged |
+| turbulent flat plate in 3-D (`--extrude 0.1`, half-length mesh, 125k unknowns, MUMPS 4.3 GB) | - | 274 s for the 3-D stage after the 2-D solution | Cf 0.00364 vs Coles-Fernholz 0.00365 at Re_theta 1639 |
 | cylinder shedding, 1600 theta steps (`cylinder_shedding.py`) | 77 min | 19 min | St 0.3013, C_D,max 3.2303, C_L,max 0.9958, unchanged |
 | cylinder shedding, twice-finer mesh (`cylinder_bl_fine.msh`, 41k nodes, 92k unknowns) | 74 min (one factorisation per step) | 39 min (factorisation carried across steps: 699 for 1600 steps) | St 0.3014, C_D,max 3.2320, C_L,max 0.9972, identical |
 | cylinder shedding, dt 0.0025 (3200 steps, coarse mesh) | - | 29 min | St 0.3016, C_D,max 3.2271, C_L,max 0.9885 |

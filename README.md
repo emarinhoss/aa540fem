@@ -357,6 +357,19 @@ MUMPS, 9 with NumPy and SuperLU):
 | u+ - (ln(y+)/0.41 + 5) for 30 < y+ < 300        | 0.15 to 0.87 | 0 |
 | Cf vs White's Re_x correlation, 3e5 < Re_x < 2e6 | 4.6 to 12.8 % low | (turbulent from x = 0) |
 
+The same case runs in 3-D: `--extrude 0.1` extrudes the mesh one layer
+into prisms and hexahedra between two symmetry planes and starts the 3-D
+coupling from the converged 2-D solution.  The full-length mesh gives
+280k unknowns, more than the direct solver factorises in 15 GB, and the
+fieldsplit solver stalls on the y+ = 1 cells, so the 3-D validation uses
+the half-length twin `flat_plate_turb_short.msh` (plate 0 <= x <= 1, the
+same cells, 13k nodes, 125k unknowns in 3-D): at x = 0.75 (Re_theta =
+1639) the 3-D run gives Cf = 0.00364 against 0.00365 from Coles-Fernholz
+(-0.3 %) with the first node at y+ = 0.43, converging in one outer
+iteration and 274 s after the 2-D stage; the 2-D solution on the same
+mesh gives the same Cf = 0.00364 (Re_theta = 1638), so the 3-D code
+reproduces the 2-D physics to the printed digits on a wall-resolved mesh.
+
 For the incompressible system the pressure is a constraint multiplier, not
 an ODE unknown, so the RK45 scheme is applied to the velocity with a
 pressure projection at every stage: each stage solves the constant

@@ -367,16 +367,40 @@ solve without SUPG reproduces the 2-D field to 1e-8, and with SUPG the
 3-D solution and the coupled RANS eddy viscosity and wall force agree with
 2-D to a fraction of a per cent (the stabilisation parameters see the third
 mesh dimension, so exact equality is not expected).  The numba kernel
-matches the NumPy one to 1e-12 in 3-D.  The 3-D wall-resolved plate case
-itself has not been run: the extrusion needs a quad9-only mesh, and a
-wall-resolved 3-D mesh of that size needs the Krylov solver and hours.
+matches the NumPy one to 1e-12 in 3-D.
+
+The wall-resolved plate itself runs in 3-D with
+`examples/turbulent_flat_plate.py --extrude 0.1`: the mesh is extruded one
+layer (prisms from the triangles, hexahedra from the boundary-layer
+quadrilaterals, symmetry planes `u_z = 0`) and the 3-D coupling starts
+from the converged 2-D velocity, pressure and `nu_tilde` copied onto the
+node planes (`solve_rans(..., U0=, nu_tilde0=)`, no viscosity ramp).  The
+full-length mesh gives 280k unknowns, which the direct solver cannot
+factorise in 15 GB, and the fieldsplit Krylov solver stalls on the `y+ = 1`
+cells (in 2-D as well), while coarsening the streamwise spacing makes the
+Re 1e6 case diverge; the half-length twin `flat_plate_turb_short.msh`
+(plate `0 <= x <= 1`, the same cells, 13k nodes, 125k unknowns in 3-D,
+4.3 GB) is the case that fits.  Its 3-D solution converges in one outer
+iteration (274 s) and gives, at `x = 0.75` (`Re_theta = 1639`),
+`Cf = 0.00364` against the Coles-Fernholz value 0.00365 (-0.3 %), the
+first node at `y+ = 0.43`, and `u+` within 0.2 to 1.8 of the log law for
+`30 < y+ < 300`; the 2-D solution on the same mesh gives `Cf = 0.00364`
+at `Re_theta = 1638` and `u+` within 0.25 to 1.80 of the log law, i.e. the
+3-D discretisation reproduces the 2-D one to the printed digits (the
+prism and hexahedral SUPG parameters differ from the 2-D ones by the
+extrusion depth, see the consistency tests above).  The SA solves of the coupling stop at 1e-4 of the
+residual of the freestream start with the current velocity (an absolute
+target next to the relative one): a start near the solution was otherwise
+asked for 1e-4 of an already small residual and ran out of pseudo-time
+steps.
 
 ## 5. Limitations and next steps
 
 - Steady RANS; the model is used without the trip term, i.e. fully
-  turbulent from the leading edge (no transition prediction).  3-D runs are
-  consistency-checked against 2-D but not yet validated against a 3-D
-  turbulent reference case.
+  turbulent from the leading edge (no transition prediction).  The 3-D
+  validation is the extruded plate (section 3.8), a 2-D flow solved with
+  the 3-D code; a genuinely three-dimensional turbulent reference case
+  (a wing-body junction, a swept plate) is still to be run.
 - Wall-resolved only: the first cell must be at `y+` of order one.  Wall
   functions would allow coarser meshes and are a boundary-condition
   addition in `SpalartAllmarasSolver`.
