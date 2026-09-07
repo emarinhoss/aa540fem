@@ -187,6 +187,7 @@ theta distributed fieldsplit       4      6.96  9 factorisations, |dU|/|U| = 9e-
 | `cyl3d_bl.msh` (cylinder refined, channel coarsened) | 99k | MUMPS, Newton then PTC | 6 | 492 s | | 6.3770 | 0.0540 | 0.1806 |
 | `cyl3d_fine2.msh` | 227k | fieldsplit / LSC, ILU(1) | 7 | 992 s | 8.5 GB | 6.2073 | 0.0138 | 0.1718 |
 | `cylinder3d1z_bl.msh` extruded, 5 graded layers (prisms + boundary-layer hexahedra) | 164k | 4 MPI ranks, MUMPS, start from the scaled 2-D solution | 4 | 364 s | | 6.1702 | 0.0112 | 0.1656 |
+| `cylinder3d1z_bl.msh` extruded, 7 graded layers | 222k | fieldsplit / LSC, ILU(1), 2-D start | 4 | 1055 s | | 6.1812 | 0.0105 | 0.1685 |
 
 Reference 6.185 / 0.0094 / 0.1710.  In 3-D the factorisation dominates a
 Newton iteration (about 40 s of the 38 s per iteration at 81k unknowns,
@@ -209,7 +210,11 @@ extruded into 18-node prisms and 27-node hexahedra with the layer thickness
 growing by 1.5 away from the two end walls) is the first 3-D mesh whose
 drag and pressure difference both sit inside the benchmark intervals, at
 164k unknowns, and its lift (0.0112) is the closest to the reference of
-any mesh so far.  Its Newton solve starts from the 2-D solution of the
+any mesh so far; seven layers (222k unknowns, the Krylov solver: eight
+layers, 252k unknowns, is killed by the 15 GB limit at the third Newton
+step) move all three further towards the reference, C_D 6.181, C_L
+0.0105, dp 0.1685, so the spanwise resolution is what the lift still
+needs.  Its Newton solve starts from the 2-D solution of the
 cross-section times the parabolic spanwise profile (the flag builds it):
 the residual starts 50x lower than from rest and four full Newton steps
 converge, whereas from rest the first step overshoots on the coarse inlet

@@ -259,6 +259,7 @@ intervals of Schaefer and Turek (1996):
 | `cylinder3d_tet10.msh` (132k) | MUMPS, 6 GB | 592 s | 6.227 | 0.014 | 0.1742 |
 | `cyl3d_fine2.msh` (227k) | fieldsplit-LSC, 8 GB | 992 s | 6.207 | 0.014 | 0.1718 |
 | `cylinder3d1z_bl.msh` extruded, 5 graded layers (164k) | 4-rank domain decomposition, 2-D start | 364 s | 6.170 | 0.0112 | 0.1656 |
+| `cylinder3d1z_bl.msh` extruded, 7 graded layers (222k) | fieldsplit-LSC, 2-D start | 1055 s | 6.181 | 0.0105 | 0.1685 |
 | reference (interval) | | | 6.185 (6.05-6.25) | 0.0094 (0.008-0.010) | 0.1710 (0.165-0.175) |
 
 On the tetrahedral meshes drag and pressure difference converge
@@ -272,8 +273,10 @@ blockage the channel walls and the wake set the drag).  The extruded
 boundary-layer mesh (`--extrude`: the 2-D cross-section with quadrilateral
 layers on the cylinder, extruded into prisms and hexahedra with layers
 graded towards the end walls) brings the lift to 0.0112 at 164k unknowns
-with drag and pressure difference inside the intervals; the remaining
-lift error is the spanwise and cross-section resolution of that mesh.
+with drag and pressure difference inside the intervals, and to 0.0105
+with seven layers (222k unknowns, drag 0.06 % and pressure difference
+1.5 % from the reference), converging with the spanwise resolution; the
+next refinement no longer fits the 15 GB of this machine.
 The direct solver and the Krylov solver give identical numbers; the Krylov
 path is the one that fits the 227k case in memory.
 
