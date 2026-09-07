@@ -290,11 +290,25 @@ meshes (nodal values, so the positions are quantised to the node spacing):
 | 12 (49k) | -0.1834 (0.458) | 0.1337 (0.208) | -0.2162 (0.833) | 248 s |
 | 16 (113k) | -0.1917 (0.469) | 0.1384 (0.219) | -0.2263 (0.812) | 1298 s |
 
-The changes halve with each refinement (second order in the cell size), so
-the converged extrema are about -0.20, 0.14 and -0.24.  The published
-tables of Ku, Hirsh and Taylor (1987), Wong and Baker (2002) and
-Albensoeder and Kuhlmann (2005) could not be retrieved from this
-environment, so the quantitative comparison for this case is still open;
+On these uniform meshes the extrema converge only at first order (the
+corner singularities of the lid).  Clustering the cells towards the six
+walls (`--stretch 1.5`, `box(..., stretch=)`: tanh spacing, the wall cells
+a fifth of the middle ones) converges much faster:
+
+| cells per side, clustered (unknowns) | u_min (at y) | v_max (at x) | v_min (at x) | wall |
+|---|---|---|---|---|
+| 8 (15k) | -0.1943 (0.500) | 0.1323 (0.226) | -0.2128 (0.774) | 28 s |
+| 12 (49k) | -0.2010 (0.500) | 0.1432 (0.197) | -0.2364 (0.803) | 257 s |
+| 16 (113k) | -0.2056 (0.449) | 0.1466 (0.218) | -0.2408 (0.816) | 1356 s |
+
+The last refinement changes the three extrema by 0.0046, 0.0034 and
+0.0044, and the uniform and clustered sequences head for the same limits,
+about -0.21, 0.150 and -0.243 (Richardson extrapolation of the clustered
+v extrema; u_min sits between nodes on the clustered mesh so its nodal
+value lags).  The published tables of Ku, Hirsh and Taylor (1987), Wong
+and Baker (2002) and Albensoeder and Kuhlmann (2005) could not be
+retrieved from this environment (the paper hosts are blocked), so the
+last step of the comparison, against their digits, is left to the reader;
 the profiles are written to `centreline_<n>.csv` for it.
 
 ### High Reynolds numbers: stabilisation and continuation
