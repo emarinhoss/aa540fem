@@ -335,14 +335,14 @@ without trip term starts laminar: the computed `Cf` follows Blasius up to
 given `x` is not that of the correlations.  The comparison that removes
 this dependence on the origin is the Coles-Fernholz law at the momentum
 thickness Reynolds number of the computed profile: at `x = 1.5` the profile
-gives `Re_theta = 2885` and `Cf = 0.00327` against the Coles-Fernholz
+gives `Re_theta = 2884` and `Cf = 0.00327` against the Coles-Fernholz
 value `2 [ln(Re_theta)/0.384 + 4.127]^(-2) = 0.00323` (Nagib, Chauhan and
-Monkewitz [11]), a difference of 1.2 %.
+Monkewitz [11]), a difference of 1.1 %.
 
 Law of the wall at `x = 1.5` (`u_tau = 0.0404`, first node at `y+ = 0.40`,
 62 nodes across the layer): the viscous sublayer sits on `u+ = y+`; in the
 log layer `30 < y+ < 300` the computed `u+` exceeds `ln(y+)/0.41 + 5.0` by
-0.14 to 0.86 (20 nodes, i.e. within 4 % of `u+`), the excess growing towards
+0.15 to 0.87 (20 nodes, i.e. within 4 % of `u+`), the excess growing towards
 the outer edge where the wake component sets in; in the buffer layer
 `5 < y+ < 30` the profile runs up to 1.3 below the two-piece law, which is
 the crudeness of the law there rather than of the solution.  The freestream

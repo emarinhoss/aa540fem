@@ -351,11 +351,11 @@ is documented with its equations, references and implementation in
 plate at Re 1e6 per unit length (Re_x up to 2e6; 4 minutes with numba and
 MUMPS, 9 with NumPy and SuperLU):
 
-| turbulent flat plate, x = 1.5 (Re_theta = 2885) | computed | reference |
+| turbulent flat plate, x = 1.5 (Re_theta = 2884) | computed | reference |
 |-------------------------------------------------|----------|-----------|
 | Cf                                              | 0.00327  | 0.00323 (Coles-Fernholz) |
-| u+ - (ln(y+)/0.41 + 5) for 30 < y+ < 300        | 0.14 to 0.86 | 0 |
-| Cf vs White's Re_x correlation, 3e5 < Re_x < 2e6 | 4.5 to 12.8 % low | (turbulent from x = 0) |
+| u+ - (ln(y+)/0.41 + 5) for 30 < y+ < 300        | 0.15 to 0.87 | 0 |
+| Cf vs White's Re_x correlation, 3e5 < Re_x < 2e6 | 4.6 to 12.8 % low | (turbulent from x = 0) |
 
 For the incompressible system the pressure is a constraint multiplier, not
 an ODE unknown, so the RK45 scheme is applied to the velocity with a
