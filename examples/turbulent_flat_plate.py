@@ -60,10 +60,26 @@ def law_of_the_wall(yplus):
 def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=None, verbose=True,
         extrude=0.0, **kw):
     """``extrude > 0``: the 2-D mesh is extruded one layer over that depth and the
-    same case is solved in 3-D between two symmetry planes (``u_z = 0``)."""
+    same case is solved in 3-D between two symmetry planes (``u_z = 0``), starting
+    from the converged 2-D solution copied onto the node planes (the 3-D problem
+    then needs a few outer iterations and no viscosity ramp)."""
     mesh = read_mesh(mesh_file)
     if extrude:
+        rans2, _ = run(mesh_file, re, station, verbose, **kw)
+        n2 = mesh.n_nodes
         mesh = mesh.extrude(extrude, layers=1)
+        planes = mesh.n_nodes // n2
+        f2 = rans2.flow
+        from aa540fem.incompressible.space import TaylorHoodSpace
+
+        space3 = TaylorHoodSpace(mesh)
+        u0 = np.concatenate([np.tile(f2.u, planes), np.tile(f2.v, planes),
+                             np.zeros(mesh.n_nodes),
+                             np.tile(f2.p_nodal, planes)[space3.pressure_nodes]])
+        kw = {**kw, "U0": u0, "nu_tilde0": np.tile(rans2.nu_tilde, planes),
+              "viscosity_ramp": (1.0,)}
+        if verbose:
+            print(f"3-D: {mesh.n_nodes} nodes, {space3.ndof} unknowns, from the 2-D solution")
     nu = 1.0 / re
     bc = {"inlet": (1.0, 0.0), "top": (1.0, 0.0), "symmetry": (None, 0.0),
           "plate": (0.0, 0.0), "outlet": "open"}
@@ -80,7 +96,8 @@ def run(mesh_file=MESHES / "flat_plate_turb.msh", re=1e6, station=None, verbose=
         zeros = np.zeros_like(y)
         return (u, zeros) if z is None else (u, zeros, zeros)
 
-    rans = solve_rans(prob, wall_tags=["plate"], verbose=verbose, U0=initial, **kw)
+    kw.setdefault("U0", initial)
+    rans = solve_rans(prob, wall_tags=["plate"], verbose=verbose, **kw)
     flow = rans.flow
 
     tr = flow.wall_traction("plate")

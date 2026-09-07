@@ -45,7 +45,7 @@ class RANSSolution:
 def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                max_outer: int = 40, tol: float = 1e-3, relax: float = 0.7, verbose=False,
                force_tag=None, U0=None, viscosity_ramp=(1.0,),
-               flow_options=None) -> RANSSolution:
+               flow_options=None, nu_tilde0=None) -> RANSSolution:
     """Steady RANS solution with the Spalart-Allmaras model.
 
     Parameters
@@ -73,6 +73,8 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                   wall-resolved meshes.
     flow_options : extra keyword arguments for :func:`solve_flow`
                   (e.g. ``dtau0`` of the pseudo-transient continuation).
+    nu_tilde0   : initial nodal working variable (default: ``nu_tilde_inf``
+                  everywhere), e.g. a converged solution on a related mesh.
     verbose     : print one line per outer iteration; ``verbose=2`` also
                   prints the Newton / pseudo-time history of the sub-solves.
     """
@@ -90,11 +92,12 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
             result = _solve_rans(problem, wall_tags, nu_tilde_inf, None,
                                  max_outer if last else 6, tol if last else 10 * tol, relax,
                                  verbose, force_tag, U0 if result is None else result.flow.U,
-                                 None if result is None else result.nu_tilde, flow_options)
+                                 nu_tilde0 if result is None else result.nu_tilde,
+                                 flow_options)
         problem.mu = mu_target
         return result
     return _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, verbose,
-                       force_tag, U0, None, flow_options)
+                       force_tag, U0, nu_tilde0, flow_options)
 
 
 def _initial_vector(problem, U0):
