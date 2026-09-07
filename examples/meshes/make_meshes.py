@@ -7,7 +7,9 @@ its boundary-layer variants ``cylinder_bl.msh`` and the twice-finer
 ``cylinder_bl_fine.msh``), the 3D-1Z cross-section ``cylinder3d1z_bl.msh``
 (``cylinder3d1z.geo``: cylinder at x = 0.5 in the 2.5 channel, coarser, that
 ``examples/cylinder3d.py --extrude`` extrudes into prisms and hexahedra), the flat-plate meshes
-``flat_plate_bl.msh`` and the NACA 0012 far-field mesh
+``flat_plate_bl.msh``, ``flat_plate_turb.msh`` and its half-length twin
+``flat_plate_turb_short.msh`` (the base of the extruded 3-D turbulent plate), the NACA
+0012 far-field mesh
 ``airfoil_naca0012_a5_tri6.msh`` and the small 3-D tetrahedral box
 ``box_tet10.msh`` next to this file.  The ``_bl`` meshes use
 Gmsh's boundary-layer field, which extrudes quadrilaterals from the wall
@@ -157,13 +159,16 @@ def make_turbulent_flat_plate(name: str = "flat_plate_turb"):
                            lc_edge=2e-4)
 
 
-def make_turbulent_flat_plate_medium(name: str = "flat_plate_turb_medium"):
-    """The turbulent plate with the same wall-normal layers (2e-5 first cell,
-    ratio 1.25) and edge refinement but a coarser streamwise spacing (12.8k
-    nodes against 23k): ``examples/turbulent_flat_plate.py --extrude`` extrudes
-    it into a 3-D wall-resolved mesh that a direct solver still fits."""
-    return make_flat_plate(name=name, x0=-0.5, x1=2.5, plate=2.0, height=1.0, lc=0.15,
-                           lc_plate=0.035, size_wall=2e-5, ratio=1.25, thickness=0.06,
+def make_turbulent_flat_plate_short(name: str = "flat_plate_turb_short"):
+    """The turbulent plate with the same cells as ``flat_plate_turb.msh`` (2e-5
+    wall cell, ratio 1.25, 0.02 streamwise, 2e-4 at the edges) on half the
+    domain (plate 0 <= x <= 1 in ``[-0.25, 1.5] x [0, 0.5]``, Re_x up to 1e6),
+    13k nodes: ``examples/turbulent_flat_plate.py --extrude`` extrudes it into
+    the 3-D wall-resolved case (125k unknowns), which a direct solver still
+    fits in 15 GB where the full-length mesh (280k) does not.  Coarsening the
+    streamwise spacing instead makes the Re 1e6 case diverge."""
+    return make_flat_plate(name=name, x0=-0.25, x1=1.5, plate=1.0, height=0.5, lc=0.1,
+                           lc_plate=0.02, size_wall=2e-5, ratio=1.25, thickness=0.06,
                            lc_edge=2e-4)
 
 
@@ -377,7 +382,7 @@ if __name__ == "__main__":
                         boundary_layer=([5, 6, 7, 8], 0.002, 1.25, 0.012), size_factor=1.6))
     print("wrote", make_flat_plate())
     print("wrote", make_turbulent_flat_plate())
-    print("wrote", make_turbulent_flat_plate_medium())
+    print("wrote", make_turbulent_flat_plate_short())
     print("wrote", make_airfoil())
     print("wrote", make_box_tet10())
     print("wrote", make_cylinder3d())
