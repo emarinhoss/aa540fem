@@ -6,7 +6,7 @@ annulus meshes ``annulus_tri.msh``, ``annulus_tri6.msh``, ``annulus_quad.msh``,
 its boundary-layer variants ``cylinder_bl.msh`` and the twice-finer
 ``cylinder_bl_fine.msh``), the 3D-1Z cross-section ``cylinder3d1z_bl.msh``
 (``cylinder3d1z.geo``: cylinder at x = 0.5 in the 2.5 channel, coarser, that
-``examples/cylinder3d.py --extrude`` extrudes into prisms and hexahedra), the flat-plate mesh
+``examples/cylinder3d.py --extrude`` extrudes into prisms and hexahedra), the flat-plate meshes
 ``flat_plate_bl.msh`` and the NACA 0012 far-field mesh
 ``airfoil_naca0012_a5_tri6.msh`` and the small 3-D tetrahedral box
 ``box_tet10.msh`` next to this file.  The ``_bl`` meshes use
@@ -155,6 +155,15 @@ def make_turbulent_flat_plate(name: str = "flat_plate_turb"):
     return make_flat_plate(name=name, x0=-0.5, x1=2.5, plate=2.0, height=1.0, lc=0.1,
                            lc_plate=0.02, size_wall=2e-5, ratio=1.25, thickness=0.06,
                            lc_edge=2e-4)
+
+
+def make_turbulent_flat_plate_coarse(name: str = "flat_plate_turb_coarse"):
+    """The turbulent plate with the same 2e-5 wall cell but a coarser streamwise
+    spacing (a third of the nodes): ``examples/turbulent_flat_plate.py --extrude``
+    extrudes it into a 3-D wall-resolved mesh that a direct solver still fits."""
+    return make_flat_plate(name=name, x0=-0.5, x1=2.5, plate=2.0, height=1.0, lc=0.2,
+                           lc_plate=0.05, size_wall=2e-5, ratio=1.35, thickness=0.06,
+                           lc_edge=5e-4)
 
 
 def naca4(code: str = "0012", n: int = 100, chord: float = 1.0):
@@ -367,6 +376,7 @@ if __name__ == "__main__":
                         boundary_layer=([5, 6, 7, 8], 0.002, 1.25, 0.012), size_factor=1.6))
     print("wrote", make_flat_plate())
     print("wrote", make_turbulent_flat_plate())
+    print("wrote", make_turbulent_flat_plate_coarse())
     print("wrote", make_airfoil())
     print("wrote", make_box_tet10())
     print("wrote", make_cylinder3d())
