@@ -119,6 +119,48 @@ def test_variable_viscosity_flow_jacobian_and_poiseuille():
         FlowAssembler(FlowProblem(mesh, eddy_viscosity=np.ones(3), bc={}))
 
 
+def test_rans_airfoil_lift_and_drag():
+    """SA coupling on the coarse far-field airfoil mesh (5 degrees baked into the
+    geometry, freestream along +x): the outer iterations converge on a curved
+    lifting geometry and the force has positive lift and drag."""
+    pytest.importorskip("meshio")
+    import pathlib
+    import warnings
+
+    from aa540fem import read_mesh
+    from aa540fem.turbulence import solve_rans
+
+    meshes = pathlib.Path(__file__).resolve().parent.parent / "examples" / "meshes"
+    mesh = read_mesh(meshes / "airfoil_naca0012_a5_tri6.msh")
+    nu = 1e-3                                                  # Re = 1e3 on the unit chord
+    prob = FlowProblem(mesh, mu=nu, rho=1.0, stabilisation=True,
+                       bc={"inlet": (1.0, 0.0), "farfield": (1.0, 0.0),
+                           "airfoil": (0.0, 0.0), "outlet": "open"})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        rans = solve_rans(prob, wall_tags=["airfoil"], max_outer=2)
+    assert all(h[4] for h in rans.history)                     # SA solves converged
+    assert np.all(rans.nu_tilde[mesh.bc_nodes["airfoil"]] == 0)
+    assert rans.nu_t.max() > nu and rans.nu_t.min() >= 0
+    fx, fy = rans.flow.forces("airfoil")
+    assert fy > 0                                              # lift at 5 degrees incidence
+    assert 0 < fx < fy                                         # drag positive and much smaller
+
+
+def test_rans_sa_max_steps_caps_the_sub_solve():
+    """``sa_max_steps`` bounds the pseudo-transient steps of each SA sub-solve
+    (a transitional-regime stall must not burn the default 200-step budget)."""
+    from aa540fem.turbulence import solve_rans
+
+    mesh = geometry(2.0, 1.0, 6, "quad9")
+    nu = 1e-3
+    prob = FlowProblem(mesh, mu=nu, rho=1.0, stabilisation=True,
+                       bc={"left": (lambda x, y: y, 0.0), "top": (1.0, 0.0),
+                           "bottom": (0.0, 0.0), "right": "open"})
+    rans = solve_rans(prob, wall_tags=["bottom"], max_outer=2, sa_max_steps=2)
+    assert all(h[3] <= 2 for h in rans.history)                # h[3]: SA steps of the outer
+
+
 def test_rans_coupling_turbulent_skin_friction_exceeds_laminar():
     """Two outer iterations of the SA coupling on the (coarse) laminar-plate mesh:
     the eddy viscosity grows and the skin friction rises above Blasius."""

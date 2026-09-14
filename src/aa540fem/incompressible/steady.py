@@ -62,7 +62,7 @@ def project_divergence_free(asm: FlowAssembler, U, fixed, vals):
 def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: bool = False,
                rtol: float = 1e-9, atol: float = 1e-11, max_newton: int = 30,
                damping: bool = True, stokes: bool = False, continuation: str = "auto",
-               dtau0: float = 1.0, max_ptc: int = 200,
+               dtau0: float = 1.0, max_ptc: int = 200, dtau_max: float = 1e6,
                local_timestep: bool = True) -> FlowSolution:
     """Steady Navier-Stokes (or Stokes with ``stokes=True``).
 
@@ -72,7 +72,10 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
     PTC from the initial state if Newton does not converge or stalls).  With
     ``local_timestep`` (default) the pseudo-time step is scaled by the local
     convective time scale (:func:`local_pseudo_time_scaling`) and ``dtau0``
-    is a CFL number; otherwise it is a global time.  Pass ``U0`` (a previous
+    is a CFL number; otherwise it is a global time.  ``dtau_max`` caps the
+    SER growth of the pseudo-time step: on stiff warm-started states the
+    x10 growth overshoots the stability boundary and every overshoot costs
+    a full rejected inner Newton.  Pass ``U0`` (a previous
     ``FlowSolution.U``) for continuation in Reynolds number.  ``method`` is
     ``"direct"`` (sparse LU; the saddle-point Jacobian is indefinite, so the
     Krylov methods of :class:`LinearSolver` do not apply) or
@@ -131,7 +134,7 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
             inv = np.concatenate([1.0 / scale] * asm.space.dim + [np.ones(asm.space.Np)])
             M = asm.pattern.matrix(asm.M_data * inv[asm.pattern.rows])   # row scaling
         res = pseudo_transient(residual_jacobian, U, fixed, M, method, rtol, atol, dtau0,
-                               max_ptc, verbose=verbose, residual=residual)
+                               max_ptc, dtau_max=dtau_max, verbose=verbose, residual=residual)
     if not res.converged:
         warnings.warn(f"steady solve did not converge in {res.iterations} iterations "
                       f"(|R| = {res.residuals[-1]:.2e})", stacklevel=2)

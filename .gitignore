@@ -8,6 +8,7 @@ temperature.png
 *.vtu
 *.pvd
 airfoil_out/
+turb_airfoil_out/
 *.csv
 
 # LaTeX build files of report/

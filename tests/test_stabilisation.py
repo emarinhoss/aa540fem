@@ -152,6 +152,19 @@ def test_ptc_matches_newton_and_auto_falls_back():
         solve_flow(p, continuation="bogus")
 
 
+def test_ptc_dtau_max_caps_the_pseudo_time_step():
+    """``dtau_max`` bounds the SER growth of the pseudo-time step (on stiff
+    warm-started states the x10 growth overshoots the stability boundary and
+    every overshoot costs a full rejected inner Newton)."""
+    p = cavity(0.01, elems=12, stabilisation=True)
+    free = solve_flow(p, continuation="ptc")
+    assert max(free.info["dtau"]) > 0.5              # SER does grow past the cap
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")              # capped step: may not converge
+        capped = solve_flow(p, continuation="ptc", dtau_max=0.5, max_ptc=free.info["iterations"])
+    assert max(capped.info["dtau"]) <= 0.5
+
+
 def test_mixed_boundary_layer_mesh_cylinder():
     pytest.importorskip("meshio")
     mesh = read_mesh(MESHES / "cylinder_bl.msh")

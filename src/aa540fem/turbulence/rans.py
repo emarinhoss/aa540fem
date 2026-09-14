@@ -45,7 +45,7 @@ class RANSSolution:
 def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                max_outer: int = 40, tol: float = 1e-3, relax: float = 0.7, verbose=False,
                force_tag=None, U0=None, viscosity_ramp=(1.0,),
-               flow_options=None, nu_tilde0=None) -> RANSSolution:
+               flow_options=None, nu_tilde0=None, sa_max_steps: int = 200) -> RANSSolution:
     """Steady RANS solution with the Spalart-Allmaras model.
 
     Parameters
@@ -75,6 +75,11 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                   (e.g. ``dtau0`` of the pseudo-transient continuation).
     nu_tilde0   : initial nodal working variable (default: ``nu_tilde_inf``
                   everywhere), e.g. a converged solution on a related mesh.
+    sa_max_steps : pseudo-transient step budget of each SA sub-solve; an
+                  unconverged sub-solve returns its best iterate and the
+                  under-relaxed coupling proceeds (transitional-regime SA
+                  states can limit-cycle in pseudo-time, and a bounded
+                  sub-solve beats burning the default budget there).
     verbose     : print one line per outer iteration; ``verbose=2`` also
                   prints the Newton / pseudo-time history of the sub-solves.
     """
@@ -93,11 +98,11 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                                  max_outer if last else 6, tol if last else 10 * tol, relax,
                                  verbose, force_tag, U0 if result is None else result.flow.U,
                                  nu_tilde0 if result is None else result.nu_tilde,
-                                 flow_options)
+                                 flow_options, sa_max_steps)
         problem.mu = mu_target
         return result
     return _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, verbose,
-                       force_tag, U0, nu_tilde0, flow_options)
+                       force_tag, U0, nu_tilde0, flow_options, sa_max_steps)
 
 
 def _initial_vector(problem, U0):
@@ -112,8 +117,8 @@ def _initial_vector(problem, U0):
 
 
 def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, verbose,
-                force_tag, U0, nu_tilde0, flow_options=None):
-    flow_options = {"rtol": 1e-5, "atol": 1e-12, **(flow_options or {})}
+                force_tag, U0, nu_tilde0, flow_options=None, sa_max_steps=200):
+    flow_options = {"rtol": 1e-5, "atol": 1e-12, "continuation": "auto", **(flow_options or {})}
     U0 = _initial_vector(problem, U0)
     mesh = problem.mesh
     nu = problem.mu / problem.rho
@@ -138,7 +143,7 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
     nu_t = model.eddy_viscosity(nt)
     problem.eddy_viscosity = problem.rho * nu_t
     inner = bool(verbose) and int(verbose) >= 2
-    flow = solve_flow(problem, U0=U0, continuation="auto", verbose=inner, **flow_options)
+    flow = solve_flow(problem, U0=U0, verbose=inner, **flow_options)
     if verbose:
         print(f"RANS start: flow {flow.info['continuation']} in "
               f"{flow.info['iterations']} iterations")
@@ -158,14 +163,15 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
             r_free = sa.residual_jacobian(free)[0]
             r_free[fixed_nodes] = 0.0
             sa_atol = 1e-4 * np.linalg.norm(r_free)
-        res = sa.solve(nt, fixed_nodes, fixed_vals, rtol=1e-4, atol=sa_atol, verbose=inner)
+        res = sa.solve(nt, fixed_nodes, fixed_vals, rtol=1e-4, atol=sa_atol,
+                       max_steps=sa_max_steps, verbose=inner)
         nt_new = res.T
         nt = relax * nt_new + (1.0 - relax) * nt
         nu_t_new = model.eddy_viscosity(nt)
         change = np.linalg.norm(nu_t_new - nu_t) / max(np.linalg.norm(nu_t_new), 1e-300)
         nu_t = nu_t_new
         problem.eddy_viscosity = problem.rho * nu_t
-        flow = solve_flow(problem, U0=flow.U, continuation="auto", verbose=inner, **flow_options)
+        flow = solve_flow(problem, U0=flow.U, verbose=inner, **flow_options)
         force = flow.forces(force_tag)
         history.append((k, change, force, res.iterations, res.converged, flow.info["iterations"]))
         if verbose:
