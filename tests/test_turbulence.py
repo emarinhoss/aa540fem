@@ -119,6 +119,29 @@ def test_variable_viscosity_flow_jacobian_and_poiseuille():
         FlowAssembler(FlowProblem(mesh, eddy_viscosity=np.ones(3), bc={}))
 
 
+def test_turbulent_airfoil_mesh_wall_resolved():
+    """The committed wall-resolved NACA 0012 mesh (``make_turbulent_airfoil``):
+    hybrid quad9 boundary layer in a triangle6 far field, unrotated chord [0, 1],
+    first cell a few 1e-6 chords (y+ ~ 1 at Re = 6e6)."""
+    pytest.importorskip("meshio")
+    import pathlib
+
+    from aa540fem import read_mesh
+
+    meshes = pathlib.Path(__file__).resolve().parent.parent / "examples" / "meshes"
+    mesh = read_mesh(meshes / "airfoil_naca0012_turb.msh")
+    assert {"airfoil", "farfield", "outlet"} <= set(mesh.tags)
+    assert "quad9" in mesh.cells and "triangle6" in mesh.cells
+    wall = mesh.bc_nodes["airfoil"]
+    assert np.isclose(mesh.x[wall].min(), 0.0, atol=1e-3)      # unrotated unit chord
+    assert np.isclose(mesh.x[wall].max(), 1.0, atol=1e-3)
+    assert np.abs(mesh.y[wall]).max() < 0.07                   # 12 % thickness, no rotation
+    d = mesh.wall_distance("airfoil")
+    first = d[d > 1e-12].min()                                 # mid-side node of the first layer
+    assert 3e-7 < first < 5e-6                                 # wall-resolved (y+ ~ 1 at Re 6e6)
+    assert 2e4 < mesh.n_nodes < 4e5                            # direct-solver sized in 2-D
+
+
 def test_rans_airfoil_lift_and_drag():
     """SA coupling on the coarse far-field airfoil mesh (5 degrees baked into the
     geometry, freestream along +x): the outer iterations converge on a curved

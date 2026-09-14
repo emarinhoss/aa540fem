@@ -9,8 +9,8 @@ its boundary-layer variants ``cylinder_bl.msh`` and the twice-finer
 ``examples/cylinder3d.py --extrude`` extrudes into prisms and hexahedra), the flat-plate meshes
 ``flat_plate_bl.msh``, ``flat_plate_turb.msh`` and its half-length twin
 ``flat_plate_turb_short.msh`` (the base of the extruded 3-D turbulent plate), the NACA
-0012 far-field mesh
-``airfoil_naca0012_a5_tri6.msh`` and the small 3-D tetrahedral box
+0012 far-field mesh ``airfoil_naca0012_a5_tri6.msh``, its wall-resolved
+RANS twin ``airfoil_naca0012_turb.msh`` and the small 3-D tetrahedral box
 ``box_tet10.msh`` next to this file.  The ``_bl`` meshes use
 Gmsh's boundary-layer field, which extrudes quadrilaterals from the wall
 (``quad9`` after the second-order pass) into an otherwise triangular mesh.
@@ -35,8 +35,10 @@ MESHES = {
 }
 
 
-def _boundary_layer(curves, size_wall, ratio, thickness, quads=True):
-    """Gmsh boundary-layer field on ``curves`` (call after synchronize)."""
+def _boundary_layer(curves, size_wall, ratio, thickness, quads=True, fan_points=None):
+    """Gmsh boundary-layer field on ``curves`` (call after synchronize).
+    ``fan_points``: point tags where the layer fans around a sharp corner
+    (e.g. the trailing edge of an airfoil)."""
     f = gmsh.model.mesh.field
     bl = f.add("BoundaryLayer")
     f.setNumbers(bl, "CurvesList", curves)
@@ -44,6 +46,8 @@ def _boundary_layer(curves, size_wall, ratio, thickness, quads=True):
     f.setNumber(bl, "Ratio", ratio)
     f.setNumber(bl, "Thickness", thickness)
     f.setNumber(bl, "Quads", 1 if quads else 0)
+    if fan_points:
+        f.setNumbers(bl, "FanPointsList", fan_points)
     f.setAsBoundaryLayer(bl)
     return bl
 
@@ -200,12 +204,20 @@ def naca4(code: str = "0012", n: int = 100, chord: float = 1.0):
 def make_airfoil(name: str = "airfoil_naca0012_a5_tri6", code: str = "0012",
                  alpha_deg: float = 5.0, n_points: int = 120, order: int = 2,
                  far=(-6.0, 12.0, -6.0, 6.0), lc_surface: float = 0.008, lc_far: float = 0.6,
-                 lc_wake: float = 0.08):
+                 lc_wake: float = 0.08, wake_box=(-0.3, 4.0, -0.5, 0.5), far_dist: float = 3.0,
+                 boundary_layer=None, lc_edge: float | None = None, edge_radius: float = 0.1):
     """Far-field mesh around a NACA 4-digit airfoil rotated by ``-alpha_deg``.
 
     The freestream is then along +x, so the x/y forces on the airfoil are
     drag and lift.  Physical curves: ``inlet`` (left), ``outlet`` (right),
     ``farfield`` (top and bottom), ``airfoil``.
+
+    ``boundary_layer=(size_wall, ratio, thickness)`` grows quadrilateral
+    layers from the surface (fanned around the sharp trailing edge);
+    ``lc_edge`` refines the streamwise spacing towards the leading and
+    trailing edges (reaching ``lc_surface`` again at ``edge_radius``);
+    ``wake_box`` is the ``lc_wake`` refinement box and ``far_dist`` the
+    distance at which the surface spacing has grown to ``lc_far``.
     """
     upper, lower = naca4(code, n_points)
     a = np.radians(-alpha_deg)
@@ -256,18 +268,40 @@ def make_airfoil(name: str = "airfoil_naca0012_a5_tri6", code: str = "0012",
         f.setNumber(thr, "SizeMin", lc_surface)
         f.setNumber(thr, "SizeMax", lc_far)
         f.setNumber(thr, "DistMin", 0.05)
-        f.setNumber(thr, "DistMax", 3.0)
+        f.setNumber(thr, "DistMax", far_dist)
         wake = f.add("Box")
         f.setNumber(wake, "VIn", lc_wake)
         f.setNumber(wake, "VOut", lc_far)
-        f.setNumber(wake, "XMin", -0.3)
-        f.setNumber(wake, "XMax", 4.0)
-        f.setNumber(wake, "YMin", -0.5)
-        f.setNumber(wake, "YMax", 0.5)
+        f.setNumber(wake, "XMin", wake_box[0])
+        f.setNumber(wake, "XMax", wake_box[1])
+        f.setNumber(wake, "YMin", wake_box[2])
+        f.setNumber(wake, "YMax", wake_box[3])
         f.setNumber(wake, "Thickness", 1.5)
+        fields = [thr, wake]
+        if lc_edge is not None:
+            # refine the streamwise spacing towards the leading and trailing
+            # edges (suction peak, sharp corner), like the plate's lc_edge
+            edge_dist = f.add("Distance")
+            f.setNumbers(edge_dist, "PointsList", [le, te])
+            edge_thr = f.add("Threshold")
+            f.setNumber(edge_thr, "InField", edge_dist)
+            f.setNumber(edge_thr, "SizeMin", lc_edge)
+            f.setNumber(edge_thr, "SizeMax", lc_surface)
+            f.setNumber(edge_thr, "DistMin", 0.005)
+            f.setNumber(edge_thr, "DistMax", edge_radius)
+            # beyond edge_radius this field must not contribute to the Min,
+            # or it would cap the whole far field at lc_surface
+            f.setNumber(edge_thr, "StopAtDistMax", 1)
+            fields.append(edge_thr)
         combined = f.add("Min")
-        f.setNumbers(combined, "FieldsList", [thr, wake])
+        f.setNumbers(combined, "FieldsList", fields)
         f.setAsBackgroundMesh(combined)
+        if boundary_layer is not None:
+            _boundary_layer([c_upper, c_lower], *boundary_layer, fan_points=[te])
+            # curving the thin wall cells can push their high-order nodes
+            # through the layer (top-edge mid-nodes almost on the wall):
+            # optimise the curved elements after the second-order pass
+            gmsh.option.setNumber("Mesh.HighOrderOptimize", 2)
         gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
         gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
         gmsh.option.setNumber("Mesh.Algorithm", 6)              # Frontal-Delaunay
@@ -280,6 +314,27 @@ def make_airfoil(name: str = "airfoil_naca0012_a5_tri6", code: str = "0012",
         return out
     finally:
         gmsh.finalize()
+
+
+def make_turbulent_airfoil(name: str = "airfoil_naca0012_turb"):
+    """Wall-resolved NACA 0012 mesh of the RANS validation (``turbulent_airfoil.py``).
+
+    Unrotated unit chord (the angle of attack comes from the far-field
+    velocity direction at run time, so one mesh serves every alpha); 34
+    quadrilateral layers from the surface, the first one 4e-6 thick (``y+``
+    about 1 at ``Re = 6e6``), growth ratio 1.25, 3 % chord total -- about
+    1.7 boundary-layer thicknesses at the trailing edge, like the validated
+    turbulent-plate mesh: a thinner stack leaves the outer layer (which
+    carries the momentum-deficit integral) in the coarse triangles and
+    loses 15 % of the skin friction -- fanned around the sharp trailing
+    edge; streamwise spacing 6e-4 at the leading and trailing edges,
+    4.5e-3 at mid-chord; far field at 100 chords (a Dirichlet far field
+    closer in biases the lift of the point-vortex far field noticeably:
+    about 1.4 % at 6 chords, under 0.1 % at 100).  About 120k nodes."""
+    return make_airfoil(name=name, alpha_deg=0.0, n_points=200, far=(-100.0, 101.0, -100.0, 100.0),
+                        lc_surface=4.5e-3, lc_far=25.0, lc_wake=0.08,
+                        wake_box=(-0.3, 5.0, -0.4, 1.0), far_dist=50.0,
+                        boundary_layer=(4e-6, 1.25, 0.03), lc_edge=6e-4, edge_radius=0.1)
 
 
 def make_box_tet10(name: str = "box_tet10", size=(2.0, 1.0, 1.0), lc: float = 0.35):
@@ -384,5 +439,6 @@ if __name__ == "__main__":
     print("wrote", make_turbulent_flat_plate())
     print("wrote", make_turbulent_flat_plate_short())
     print("wrote", make_airfoil())
+    print("wrote", make_turbulent_airfoil())
     print("wrote", make_box_tet10())
     print("wrote", make_cylinder3d())
