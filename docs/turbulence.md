@@ -394,6 +394,72 @@ target next to the relative one): a start near the solution was otherwise
 asked for 1e-4 of an already small residual and ran out of pseudo-time
 steps.
 
+## 4b. The lifting airfoil: why alpha = 10 does not converge
+
+`examples/turbulent_airfoil.py` reproduces the NASA TMR NACA 0012 case at
+Re 6e6 at alpha = 0 (Cd 0.00741 against CFL3D 0.00819, Cp within about
+0.01, see `README.md`) and fails to converge at alpha = 10.  The diagnosis
+is recorded here because every part of it is a property of the
+discretisation rather than of one solver setting.
+
+1. **The residual norm measures the far field, not the boundary layer.**
+   The mesh spans 100 chords and its first cell is 9.1e-7 chords, so the
+   element volumes differ by more than ten orders of magnitude.  The
+   validated alpha = 0 state has |R| = 96.6, of which the cells inside
+   d < 1e-2 contribute about 1e-4.  At incidence the far-field circulation
+   adjustment dominates |R| completely.
+2. **Therefore relative tolerances short-circuit the lifting case.**  The
+   far-field part of the residual is nearly linear, so one near-Newton step
+   removes it and a relative test declares convergence after a single
+   iteration.  With `local_timestep=True` the pseudo-time step of a
+   boundary-layer node is scaled by `h/u_ref` and advances about 3e-4 per
+   step, so nothing develops there by marching either: a cold start at
+   alpha = 10 converges to CL 0.949, Cd 0.0524 with Cd_f = 5e-5, i.e. the
+   first cells still hold their initial profile.  The signature to watch
+   for is Cd_f near zero with flow sub-solves accepting in one iteration.
+3. **Absolute tolerances are equally useless**, for the same reason from
+   the other side: no absolute level distinguishes a converged boundary
+   layer from a frozen one, and asking for one (atol 3e-5 on this mesh)
+   simply burns the whole step budget every stage.
+4. **What limits the solve is the stabilisation linearisation.**  With a
+   fresh Jacobian per iteration, a backward-Euler step from the alpha = 0
+   state goes |R| 99 -> 1.01 -> 0.93 and then stops with no descent
+   direction.  The residual left over lives entirely in the boundary layer
+   (0.82 within d < 1e-4, 2e-5 outside d > 1e-2, pressure 1e-14).  This is
+   the frozen SUPG tau of section 3.4 in the flow equations: tau ~ h/|u| is
+   least consistent exactly where h is smallest and |u| varies steepest, so
+   the Newton direction stops being a descent direction while the boundary
+   layer is still unconverged.  Freezing the Jacobian across iterations
+   makes it worse (the step stalls at |R| ~ 60 instead of 0.93).
+5. **Consequences for continuation.**  Viscosity continuation converges the
+   upper rungs honestly if every stage is given a step budget rather than a
+   tolerance (factor 100, 30 and 10 reach |R| ~ 1e-5, CL 1.011 at Re 6e5),
+   but no state below a factor of about 3 is marchable: the post-SA state
+   diverges to |R| 3.1e4 at every pseudo-time step size tried.  Nor is the
+   ramp robust: walking down in 1.25x steps instead of 3.3x never reaches
+   the fine rungs, because on a regenerated mesh differing by 40 nodes
+   (gmsh is not bitwise reproducible) the factor-30 stage itself diverges,
+   at the same outer iteration and to the same digits on repeated runs,
+   where it had converged on the original mesh.  The signal common to all
+   of these is the change in eddy viscosity between outer iterations
+   staying of order one: the segregated coupling has no stable fixed point
+   in the transitional regime on this mesh, which no tolerance or guard
+   threshold can repair.  Angle
+   continuation from the converged alpha = 0 solution fails differently -
+   a rotation-blended restart introduces kinks at the wall-distance medial
+   axis, and a smooth time-ramped far-field direction (a time-dependent
+   Dirichlet condition, which the theta scheme supports) clears its first
+   step and then stalls on the same boundary-layer floor.  Global
+   pseudo-time stepping is not an escape either: `dtau` is then limited by
+   the 9.1e-7 cells and collapses to 1e-9.
+
+The two changes that would unblock it are a consistent linearisation of
+the stabilisation terms (differentiating tau with respect to the velocity)
+and a residual measure normalised by cell volume, so that convergence is
+judged where the physics is.  Both are solver changes rather than tuning,
+which is why this release documents the case instead of reporting a number
+for it.
+
 ## 5. Limitations and next steps
 
 - Steady RANS; the model is used without the trip term, i.e. fully

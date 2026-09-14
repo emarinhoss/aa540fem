@@ -72,6 +72,7 @@ python examples/airfoil.py              # NACA 0012 at 5 deg: impulsive start, C
 python examples/flat_plate.py           # laminar plate at Re 1e5 vs Blasius (stabilised, PTC)
 python examples/cylinder_shedding.py    # Re 100 vortex shedding, Strouhal number (Schaefer-Turek 2D-2)
 python examples/turbulent_flat_plate.py # Spalart-Allmaras RANS plate at Re 1e6 vs law of the wall
+python examples/turbulent_airfoil.py    # SA RANS NACA 0012 at Re 6e6 vs the NASA TMR data
 python scripts/convergence.py           # mesh-convergence study, prints observed orders
 python scripts/convergence.py --transient   # temporal orders of backward Euler / Crank-Nicolson
 python -m pytest                        # verification suite
@@ -383,6 +384,47 @@ same cells, 13k nodes, 125k unknowns in 3-D): at x = 0.75 (Re_theta =
 iteration and 274 s after the 2-D stage; the 2-D solution on the same
 mesh gives the same Cf = 0.00364 (Re_theta = 1638), so the 3-D code
 reproduces the 2-D physics to the printed digits on a wall-resolved mesh.
+
+**NACA 0012 at Re 6e6** (`examples/turbulent_airfoil.py`, mesh
+`make_meshes.make_turbulent_airfoil`: 120440 nodes, 271148 unknowns, quad9
+boundary layer 0.03 chords deep fanned at the sharp trailing edge, first
+cell 9.1e-7 chords (y+ about 0.5), far field 100 chords).  The chord is
+unrotated and the angle of attack is the direction of the far-field
+velocity, so one mesh serves every angle.  Compared with the NASA
+Turbulence Modeling Resource SA results (CFL3D and FUN3D, 897x257, M 0.15;
+this solver is incompressible, so the comparison holds only at low Mach):
+
+| alpha = 0 | computed | CFL3D | FUN3D |
+|---|---|---|---|
+| CL | 0.00012 | 0 | 0 |
+| Cd | 0.00741 | 0.00819 (-9.5 %) | 0.00812 (-8.7 %) |
+| Cd pressure / friction | 0.00154 / 0.00588 | | |
+
+Cp agrees with the TMR distribution within about 0.01 everywhere
+(`--tmr-cp` overlays their file); the whole deficit is in the friction,
+which is the same bias the flat plate shows against White's correlation
+(4.6 to 12.8 % low, see the table above), and it grows downstream where
+the high-order node placement in the curved boundary-layer quadrilaterals
+leaves the mid-chord centre nodes about 25 % off-centre.  The boundary
+layer is resolved: at mid-chord u = 0.076, 0.471, 0.692 and 0.833 of the
+free stream at wall distances 9e-6, 1e-4, 1e-3 and 3e-3.
+
+At alpha = 10 this case is **not converged** in this release.  A cold start
+walks the viscosity ramp down to Re 6e6 without the near-wall velocity ever
+developing: the boundary-layer cells are so small that they contribute
+almost nothing to the residual norm, which at incidence is dominated by the
+far-field circulation adjustment, so every flow sub-solve is accepted after
+one iteration and the first cells keep their initial profile (Cd_f about
+5e-5 instead of 6e-3).  Forcing real work per stage converges the upper
+rungs of the ramp honestly (CL 1.011 at Re 6e5) but the states below a
+viscosity factor of 3 are not marchable, and neither backward Euler nor a
+time-ramped far-field direction from the converged alpha = 0 solution gets
+past it: Newton stops with no descent direction while the residual that
+remains sits entirely inside the boundary layer (0.82 of 0.93 within
+d < 1e-4), which is where the SUPG tau linearisation is least consistent.
+`docs/turbulence.md` records the diagnosis; the lifting case needs either a
+consistent stabilisation linearisation or a residual measure that is not
+dominated by the far field.
 
 For the incompressible system the pressure is a constraint multiplier, not
 an ODE unknown, so the RK45 scheme is applied to the velocity with a
