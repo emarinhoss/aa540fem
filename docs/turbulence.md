@@ -321,12 +321,12 @@ singular, are excluded):
 |--------|--------------|-----------|---------------|
 | 3.0e5  | 0.00413      | 0.00473   | 0.00462       |
 | 5.0e5  | 0.00384      | 0.00428   | 0.00417       |
-| 1.0e6  | 0.00347      | 0.00376   | 0.00363       |
+| 1.0e6  | 0.00346      | 0.00376   | 0.00363       |
 | 1.5e6  | 0.00327      | 0.00350   | 0.00335       |
 | 1.9e6  | 0.00318      | 0.00336   | 0.00320       |
 
 Over the window the computed skin friction lies 4.5 to 12.8 % below White's
-correlation (mean 7.7 %) and 0 to 10.6 % below the 1/7-power law (mean
+correlation (mean 7.8 %) and 0 to 10.6 % below the 1/7-power law (mean
 4.3 %), the deficit shrinking downstream.  Both correlations assume a
 boundary layer that is turbulent from the leading edge, while the model
 without trip term starts laminar: the computed `Cf` follows Blasius up to
