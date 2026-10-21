@@ -34,6 +34,12 @@ def local_pseudo_time_scaling(mesh, nu, u_ref):
     return mesh.nodal_size("max") / max(u_ref, 1e-12)
 
 
+def _free(R, fixed):
+    R = np.array(R, dtype=float, copy=True)
+    R[fixed] = 0.0
+    return R
+
+
 def project_divergence_free(asm: FlowAssembler, U, fixed, vals):
     """Closest discretely divergence-free velocity to ``U`` (in the mass norm).
 
@@ -130,7 +136,13 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
             U = res.T       # continue from Newton's best iterate if it got somewhere;
             #                 heavily damped steps that barely reduced the residual
             #                 are a worse start than the initial state
-        U = project_divergence_free(asm, U, fixed, vals)
+        # the projection rescues a start that violates continuity, but from a
+        # nearly converged state (a restart) it can do harm: the mass-norm
+        # projection moves the velocity of thin wall cells a lot for little
+        # mass, so keep whichever state has the smaller residual
+        V = project_divergence_free(asm, U, fixed, vals)
+        if np.linalg.norm(_free(residual(V), fixed)) < np.linalg.norm(_free(residual(U), fixed)):
+            U = V
         M = asm.M
         if local_timestep:
             vel = fixed < asm.space.n_vel
