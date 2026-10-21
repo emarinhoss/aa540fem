@@ -230,9 +230,11 @@ def metric_parameters(b, upq, nu, inv_dt2, grad_div, aniso=False):
     ``q = sqrt(u.G u)``, ``Re_h = |u|^2 / (nu q)``.  Returns ``tau, gamma``
     and their derivatives with respect to the velocity components.
 
-    ``aniso``: the viscous limit and the grad-div length along the long axis
-    of the cell (``lambda_min(G) = 4 / h_L^2``, see ``FlowProblem``):
-    ``tau = [(2/dt)^2 + u.G u + (d/2) nu^2 lambda_min^2]^(-1/2)``,
+    ``aniso``: the viscous limit from the geometric mean of the longest and
+    shortest cell dimensions and the grad-div length along the long axis
+    (``lambda_min(G) = 4 / h_L^2``, ``lambda_max(G) = 4 / h_S^2``, see
+    ``FlowProblem``):
+    ``tau = [(2/dt)^2 + u.G u + (d/2) nu^2 lambda_min lambda_max]^(-1/2)``,
     ``gamma = (h_L |u| / 2) min(1, Re_h / 3)``, ``Re_h = h_L |u| / (2 nu)``.
     """
     d = b.dim
@@ -241,7 +243,7 @@ def metric_parameters(b, upq, nu, inv_dt2, grad_div, aniso=False):
     q2 = sum(upq[c] * gu[c] for c in range(d))                              # u . G u
     if aniso:
         lam = b.Glam                                                        # 4 / h_L^2
-        tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * d * nu ** 2 * lam ** 2)
+        tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * d * nu ** 2 * b.Gvis)
     else:
         gg = np.einsum("...ij,...ij->...", G, G)                            # G : G
         tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * nu ** 2 * gg)

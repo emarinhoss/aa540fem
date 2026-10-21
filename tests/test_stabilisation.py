@@ -282,8 +282,9 @@ def test_anisotropic_parameters_equal_metric_on_isotropic_cells():
 def test_anisotropic_parameters_keep_streamwise_upwinding_on_thin_cells():
     """On a cell a thousand times longer than high, the metric tau is set by the
     viscous limit of the height (no streamwise upwinding at a streamwise cell
-    Peclet number of thousands); the long-axis tau stays at the convective
-    value h_L / (2 |u|) and gamma at h_L |u| / 2."""
+    Peclet number of thousands); the anisotropic tau stays at the convective
+    value h_L / (2 |u|) and gamma at h_L |u| / 2.  At rest its viscous limit is
+    h_L h_S / (4 nu), not the h_L^2 / (4 nu) of the long axis alone."""
     from aa540fem.backends.numpy_kernels import metric_parameters
     from aa540fem.incompressible.space import _Block
 
@@ -296,6 +297,9 @@ def test_anisotropic_parameters_keep_streamwise_upwinding_on_thin_cells():
     tau_a, gamma_a, _, _ = metric_parameters(b, upq, nu, 0.0, True, aniso=True)
     assert np.allclose(b.Glam, 4.0)                         # 4 / h_L^2 with h_L = 1
     assert tau_m.max() < 0.1 * tau_a.min()                  # throttled by the 1e-3 height
-    assert np.allclose(tau_a, 0.5, rtol=1e-6)               # h_L / (2 |u|)
+    assert np.allclose(tau_a, 0.5, rtol=1e-3)               # h_L / (2 |u|)
     assert np.allclose(gamma_a, 0.5)                        # h_L |u| / 2 (Re_h far above 3)
     assert gamma_m.max() < gamma_a.min() * 1.001
+    rest = [np.zeros_like(b.X), np.zeros_like(b.X)]
+    tau_0, _, _, _ = metric_parameters(b, rest, nu, 0.0, True, aniso=True)
+    assert np.allclose(tau_0, 1e-3 / (4 * nu), rtol=1e-6)            # h_L h_S / (4 nu)

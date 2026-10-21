@@ -235,8 +235,8 @@ class SpalartAllmarasSolver:
                 G = b.Gmat
                 gu = [sum(G[..., c, k] * uq[k] for k in range(d)) for c in range(d)]
                 q2 = sum(uq[c] * gu[c] for c in range(d))                   # u . G u
-                if self.element_length == "anisotropic":                     # long-axis limit
-                    gg = d * b.Glam ** 2
+                if self.element_length == "anisotropic":                     # geometric mean
+                    gg = d * b.Gvis
                 else:
                     gg = np.einsum("...ij,...ij->...", G, G)                # G : G
                 tau = 1.0 / np.sqrt(q2 + 0.5 * D ** 2 * gg)

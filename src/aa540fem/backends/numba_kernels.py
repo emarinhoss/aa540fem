@@ -44,10 +44,11 @@ def _switch(x):
 
 
 @njit(cache=True, nogil=True)
-def _params_metric(upq, nu, inv_dt2, grad_div, aniso, lam, G, dtau, dgamma):
+def _params_metric(upq, nu, inv_dt2, grad_div, aniso, lam, lamv, G, dtau, dgamma):
     """``tau, gamma`` from the metric tensor ``G (d, d)``; the derivatives with
     respect to the velocity components are written into ``dtau``, ``dgamma``.
-    ``aniso``: viscous limit and grad-div length from ``lam = lambda_min(G)``."""
+    ``aniso``: viscous limit from ``lamv = lambda_min(G) lambda_max(G)`` and
+    grad-div length from ``lam = lambda_min(G)``."""
     d = upq.shape[0]
     gu = np.empty(d)
     q2 = 0.0
@@ -62,7 +63,7 @@ def _params_metric(upq, nu, inv_dt2, grad_div, aniso, lam, G, dtau, dgamma):
         q2 += upq[c] * s
         umag2 += upq[c] * upq[c]
     if aniso:
-        tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * d * nu * nu * lam * lam)
+        tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * d * nu * nu * lamv)
     else:
         tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * nu * nu * gg)
     tau3 = tau * tau * tau
@@ -156,7 +157,8 @@ def _params_streamline(upq, nu, inv_dt2, grad_div, dphi_q, dtau, dgamma):
 
 # -- momentum equations -----------------------------------------------
 @njit(parallel=True, cache=True, nogil=True)
-def momentum_kernel(phi, dphi, lap_phi, psi, dpsi, wh, G, Glam, ue, pe, uoe, upe, mu_q, dmu, f,
+def momentum_kernel(phi, dphi, lap_phi, psi, dpsi, wh, G, Glam, Gvis, ue, pe, uoe, upe, mu_q,
+                    dmu, f,
                     rho, inv_dt, inv_dt2, flags, N_e, S_e, JN_e, JS_e):
     d, ne, nq, n = dphi.shape
     nc = psi.shape[1]
@@ -249,7 +251,7 @@ def momentum_kernel(phi, dphi, lap_phi, psi, dpsi, wh, G, Glam, ue, pe, uoe, upe
                 upq[c] = s
             if metric:
                 tau, gamma = _params_metric(upq, nu, inv_dt2, grad_div, aniso, Glam[e, q],
-                                            G[e, q], dtau, dgamma)
+                                            Gvis[e, q], G[e, q], dtau, dgamma)
             else:
                 tau, gamma = _params_streamline(upq, nu, inv_dt2, grad_div, dphi[:, e, q, :],
                                                 dtau, dgamma)
@@ -326,7 +328,8 @@ def _stacked(b):
     cache = b.__dict__.get("_numba_stacked")
     if cache is None:
         cache = (np.ascontiguousarray(np.stack(b.dphi)), np.ascontiguousarray(np.stack(b.dpsi)),
-                 np.ascontiguousarray(b.Gmat), np.ascontiguousarray(b.Glam))
+                 np.ascontiguousarray(b.Gmat), np.ascontiguousarray(b.Glam),
+                 np.ascontiguousarray(b.Gvis))
         b.__dict__["_numba_stacked"] = cache
     return cache
 
@@ -356,8 +359,8 @@ def momentum_local(b, U, par, old, mu_q, dmu, body, options):
     S_e = np.zeros((ne, L)) if stabilised else np.zeros((1, L))
     JN_e = np.zeros((ne, d * n, d * n)) if jac else np.zeros((1, d * n, d * n))
     JS_e = np.zeros((ne, L, L)) if (jac and stabilised) else np.zeros((1, L, L))
-    dphi, dpsi, G, Glam = _stacked(b)
-    momentum_kernel(b.phi, dphi, b.lap_phi, b.psi, dpsi, b.wh, G, Glam, ue, pe, uoe, upe,
+    dphi, dpsi, G, Glam, Gvis = _stacked(b)
+    momentum_kernel(b.phi, dphi, b.lap_phi, b.psi, dpsi, b.wh, G, Glam, Gvis, ue, pe, uoe, upe,
                     np.ascontiguousarray(mu_q), dmu_s, f, float(options["rho"]),
                     float(options["inv_dt"]), float(options["inv_dt2"]), flags,
                     N_e, S_e, JN_e, JS_e)

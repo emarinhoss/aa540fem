@@ -114,7 +114,9 @@ class _Block:
         self.dpsi = map_gradients_nd(inverse, dpnat)
         self.lap_phi = physical_laplacian_curved(inverse, self.el.hessian(*coords), dnat, xe)
         self.Gmat = element_metric_nd(inverse, self.el.family)
-        self.Glam = np.ascontiguousarray(np.linalg.eigvalsh(self.Gmat)[..., 0])  # 4 / h_long^2
+        eig = np.linalg.eigvalsh(self.Gmat)
+        self.Glam = np.ascontiguousarray(eig[..., 0])                 # 4 / h_long^2
+        self.Gvis = np.ascontiguousarray(eig[..., 0] * eig[..., -1])  # 16 / (h_long h_short)^2
         pairs = ((0, 0), (0, 1), (1, 1)) if d == 2 else \
             ((0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2))
         self.G = tuple(np.ascontiguousarray(self.Gmat[..., i, j]) for i, j in pairs)
