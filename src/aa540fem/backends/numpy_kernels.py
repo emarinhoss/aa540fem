@@ -168,6 +168,27 @@ def momentum_local(b, U, par, old, mu_q, dmu, body, options, backend="numpy"):
 
 
 # -- stabilisation parameters -----------------------------------------
+# Half-width of the band in x = Re_h / 3 over which the grad-div switch
+# min(1, x) is blended quadratically (C1 with a Lipschitz derivative; exactly
+# min(1, x) outside 1 - w < x < 1 + w).  The kink of the plain min sits inside
+# every wall-resolved boundary layer, where it leaves Newton without a descent
+# direction; 0 restores the plain min.
+GRAD_DIV_BLEND = 0.0
+
+
+def grad_div_switch(x, w=None):
+    """``m(x)``, the (blended) ``min(1, x)`` of the grad-div parameter, and
+    ``m(x) + x m'(x)``, the factor of ``d(h|u|/2)`` in ``d gamma``."""
+    w = GRAD_DIV_BLEND if w is None else w
+    if w <= 0.0:
+        low = x < 1.0
+        return np.where(low, x, 1.0), np.where(low, 2.0 * x, 1.0)
+    t = np.clip(x - 1.0 + w, 0.0, 2.0 * w)               # 0 below the band, 2w above
+    m = np.where(x >= 1.0 + w, 1.0, x - t * t / (4.0 * w))
+    mp = np.where(x >= 1.0 + w, 0.0, 1.0 - t / (2.0 * w))
+    return m, m + x * mp
+
+
 def streamline_parameters(b, upq, nu, inv_dt2, grad_div):
     """Tezduyar's ``tau`` and ``gamma`` with the flow-direction element length.
 
@@ -188,11 +209,11 @@ def streamline_parameters(b, upq, nu, inv_dt2, grad_div):
     h = 2.0 / np.maximum(np.abs(sgrad).sum(axis=2), 1e-300)
     tau = 1.0 / np.sqrt(inv_dt2 + (2.0 * umag / h) ** 2 + (4.0 * nu / h ** 2) ** 2)
     re_h = umag * h / (2.0 * nu)
-    low = re_h < 3.0
     if grad_div:
-        gamma = 0.5 * h * umag * np.minimum(1.0, re_h / 3.0)
-        dgamma_du = 0.5 * h * np.where(low, 2.0 * re_h / 3.0, 1.0)      # d gamma / d|u|
-        dgamma_dh = np.where(low, h * umag ** 2 / (6.0 * nu), 0.5 * umag)  # d gamma / dh
+        m, fac = grad_div_switch(re_h / 3.0)
+        gamma = 0.5 * h * umag * m
+        dgamma_du = 0.5 * h * fac                                        # d gamma / d|u|
+        dgamma_dh = 0.5 * umag * fac                                     # d gamma / dh
     else:
         gamma = dgamma_du = dgamma_dh = 0.0 * umag
     dtau_du = -(4.0 / h ** 2) * umag * tau ** 3                            # d tau / d|u|
@@ -232,15 +253,11 @@ def metric_parameters(b, upq, nu, inv_dt2, grad_div):
     q = np.sqrt(q2s)
     if grad_div:
         hu2 = np.where(moving, umag2 / q, 0.0)                           # h_s |u| / 2
-        re_h = hu2 / nu
-        low = re_h < 3.0
-        gamma = np.where(low, hu2 * re_h / 3.0, hu2)
-        dgamma_d = [np.where(moving,
-                             np.where(low,
-                                      4.0 * umag2 * upq[c] / (3.0 * nu * q2s)
-                                      - 2.0 * umag2 ** 2 * gu[c] / (3.0 * nu * q2s ** 2),
-                                      2.0 * upq[c] / q - umag2 * gu[c] / q ** 3),
-                             0.0) for c in range(d)]
+        m, fac = grad_div_switch(hu2 / (3.0 * nu))
+        gamma = hu2 * m
+        # d(h_s |u| / 2)/du_c = 2 u_c / q - |u|^2 (G u)_c / q^3
+        dgamma_d = [np.where(moving, fac * (2.0 * upq[c] / q - umag2 * gu[c] / q ** 3), 0.0)
+                    for c in range(d)]
     else:
         gamma = 0.0 * q2
         dgamma_d = [gamma] * d
