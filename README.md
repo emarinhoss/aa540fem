@@ -563,7 +563,7 @@ twice-finer mesh (`--mesh examples/meshes/cylinder_bl_fine.msh`, 41k nodes,
 |---------------------|--------|--------|--------|--------|
 | Strouhal number     | 0.3013 | 0.3016 | 0.3014 | 0.2995 |
 | C_D,max             | 3.2303 | 3.2271 | 3.2320 | 3.2298 |
-| C_L,max             | 0.9958 | 0.9885 | 0.9972 | 1.0002 |
+| C_L,max             | 0.9957 | 0.9885 | 0.9972 | 1.0002 |
 
 All three runs are inside the intervals of Schaefer and Turek (St 0.295 to
 0.305, C_D,max 3.22 to 3.24, C_L,max 0.99 to 1.01) and periodic from
