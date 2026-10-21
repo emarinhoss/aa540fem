@@ -76,13 +76,17 @@ def turbulent_start(mesh, nu, u_tau=0.04, delta=0.03):
 
 
 def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
-        verbose=True, restart=None, turbulent=False, **kw):
+        verbose=True, restart=None, turbulent=False, element_length="anisotropic", **kw):
     mesh = read_mesh(mesh_file)
     nu = 1.0 / re
     a = np.radians(alpha)
     ux, uy = np.cos(a), np.sin(a)
     bc = {"inlet": (ux, uy), "farfield": (ux, uy), "airfoil": (0.0, 0.0), "outlet": "open"}
-    prob = FlowProblem(mesh, mu=nu, rho=1.0, stabilisation=True, bc=bc)
+    # anisotropic element length: the metric tau of the 4e-6 x 1e-2 wall cells is set by
+    # their thickness and has no streamwise upwinding left, which lets a node-to-node
+    # pressure oscillation along the surface separate the converged boundary layer
+    prob = FlowProblem(mesh, mu=nu, rho=1.0, stabilisation=True, bc=bc,
+                       element_length=element_length)
     if restart is not None:
         # state of a previous run at another angle: rotate its velocity field
         # towards the new free stream, blended by wall distance (the wall keeps
@@ -135,6 +139,9 @@ def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
     # the transitional states of the viscosity ramp can stall the SA sub-solve
     # in a pseudo-time limit cycle: bound it and let the coupling continue
     kw.setdefault("sa_max_steps", 60)
+    # the warm-started flow solves are a large pseudo-time step (a Newton step with the
+    # stabilisation parameters frozen) from the previous outer iteration
+    kw.setdefault("warm_dtau0", 1000.0)
     rans = solve_rans(prob, wall_tags=["airfoil"], verbose=verbose, **kw)
     flow = rans.flow
 
