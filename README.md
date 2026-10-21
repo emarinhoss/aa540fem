@@ -547,8 +547,9 @@ Schaefer-Turek cylinder benchmark at Re = 20:
 mesh `cylinder_bl.msh` with stabilisation the same case gives
 C_D = 5.5795, C_L = 0.0106, both on the reference).  The laminar flat plate
 at Re_L = 1e5 (`examples/flat_plate.py`, stabilised, pseudo-transient
-continuation from rest in 10 steps, 30 s) gives a skin friction within 5 %
-of Blasius for 1e4 < Re_x < 1e5 (mean 2.7 %) and velocity profiles within
+continuation from rest in 10 steps, 30 s) gives a skin friction within 6.2 %
+of Blasius for 1e4 < Re_x < 1e5 (mean 2.8 %; the largest deviation is at
+Re_x = 1.3e4, next to the leading-edge singularity) and velocity profiles within
 0.014 of the similarity solution at three stations; near the leading edge
 the Navier-Stokes skin friction exceeds Blasius, as it should.  The cylinder at
 Re = 100 (`examples/cylinder_shedding.py`, stabilised Crank-Nicolson)
