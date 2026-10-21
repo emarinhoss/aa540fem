@@ -177,7 +177,9 @@ class FlowAssembler:
         pspg = prob.pspg if pspg is None else pspg
         sp_ = self.space
         options = {"rho": prob.rho, "stab": bool(stab), "pspg": bool(pspg),
-                   "grad_div": bool(prob.grad_div), "metric": prob.element_length == "metric",
+                   "grad_div": bool(prob.grad_div),
+                   "metric": prob.element_length in ("metric", "anisotropic"),
+                   "aniso": prob.element_length == "anisotropic",
                    "follow": param_state is None, "jacobian": bool(jacobian),
                    "inv_dt": 0.0 if dt is None else 1.0 / dt,
                    "inv_dt2": 0.0 if dt is None else (2.0 / dt) ** 2}

@@ -19,28 +19,8 @@ from __future__ import annotations
 import numpy as np
 from numba import njit, prange
 
-from aa540fem.backends import numpy_kernels as _np_kernels
-
-
-@njit(cache=True, nogil=True)
-def _switch(x, w):
-    """Scalar twin of :func:`numpy_kernels.grad_div_switch`: ``(m, m + x m')``
-    for the blend half-width ``w`` (passed at run time, so the on-disk numba
-    cache never holds a stale value)."""
-    if w <= 0.0:
-        if x < 1.0:
-            return x, 2.0 * x
-        return 1.0, 1.0
-    if x >= 1.0 + w:
-        return 1.0, 1.0
-    t = x - 1.0 + w
-    if t < 0.0:
-        t = 0.0
-    m = x - t * t / (4.0 * w)
-    return m, m + x * (1.0 - t / (2.0 * w))
-
 # flag indices of the ``flags`` array
-STAB, PSPG, GRAD_DIV, METRIC, FOLLOW, TRANSIENT, BODY, JACOBIAN = range(8)
+STAB, PSPG, GRAD_DIV, METRIC, FOLLOW, TRANSIENT, BODY, JACOBIAN, ANISO = range(9)
 
 
 # -- global scatter ---------------------------------------------------
@@ -56,9 +36,18 @@ def segmented_reduce(vals, perm, seg_start, out):
 
 # -- stabilisation parameters at one quadrature point -----------------
 @njit(cache=True, nogil=True)
-def _params_metric(upq, nu, inv_dt2, grad_div, blend, G, dtau, dgamma):
+def _switch(x):
+    """Scalar twin of :func:`numpy_kernels.grad_div_switch`: ``(m, m + x m')``."""
+    if x < 1.0:
+        return x, 2.0 * x
+    return 1.0, 1.0
+
+
+@njit(cache=True, nogil=True)
+def _params_metric(upq, nu, inv_dt2, grad_div, aniso, lam, G, dtau, dgamma):
     """``tau, gamma`` from the metric tensor ``G (d, d)``; the derivatives with
-    respect to the velocity components are written into ``dtau``, ``dgamma``."""
+    respect to the velocity components are written into ``dtau``, ``dgamma``.
+    ``aniso``: viscous limit and grad-div length from ``lam = lambda_min(G)``."""
     d = upq.shape[0]
     gu = np.empty(d)
     q2 = 0.0
@@ -72,16 +61,27 @@ def _params_metric(upq, nu, inv_dt2, grad_div, blend, G, dtau, dgamma):
         gu[c] = s
         q2 += upq[c] * s
         umag2 += upq[c] * upq[c]
-    tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * nu * nu * gg)
+    if aniso:
+        tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * d * nu * nu * lam * lam)
+    else:
+        tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * nu * nu * gg)
     tau3 = tau * tau * tau
     for c in range(d):
         dtau[c] = -tau3 * gu[c]
         dgamma[c] = 0.0
     gamma = 0.0
-    if grad_div and q2 > 0.0:
+    if grad_div and aniso and umag2 > 0.0:
+        umag = np.sqrt(umag2)
+        sl = np.sqrt(lam)
+        hu2 = umag / sl                                   # h_L |u| / 2
+        m, fac = _switch(hu2 / (3.0 * nu))
+        gamma = hu2 * m
+        for c in range(d):
+            dgamma[c] = fac * upq[c] / (umag * sl)
+    elif grad_div and not aniso and q2 > 0.0:
         q = np.sqrt(q2)
         hu2 = umag2 / q
-        m, fac = _switch(hu2 / (3.0 * nu), blend)
+        m, fac = _switch(hu2 / (3.0 * nu))
         gamma = hu2 * m
         q3 = q * q * q
         for c in range(d):
@@ -90,7 +90,7 @@ def _params_metric(upq, nu, inv_dt2, grad_div, blend, G, dtau, dgamma):
 
 
 @njit(cache=True, nogil=True)
-def _params_streamline(upq, nu, inv_dt2, grad_div, blend, dphi_q, dtau, dgamma):
+def _params_streamline(upq, nu, inv_dt2, grad_div, dphi_q, dtau, dgamma):
     """Tezduyar's ``tau, gamma`` with the flow-direction length; ``dphi_q`` is
     ``(d, n)`` at the quadrature point."""
     d = upq.shape[0]
@@ -130,7 +130,7 @@ def _params_streamline(upq, nu, inv_dt2, grad_div, blend, dphi_q, dtau, dgamma):
     tau = 1.0 / np.sqrt(inv_dt2 + (2.0 * umag / h) ** 2 + (4.0 * nu / h2) ** 2)
     re_h = umag * h / (2.0 * nu)
     if grad_div:
-        msw, fac = _switch(re_h / 3.0, blend)
+        msw, fac = _switch(re_h / 3.0)
         gamma = 0.5 * h * umag * msw
         dgamma_du = 0.5 * h * fac
         dgamma_dh = 0.5 * umag * fac
@@ -156,14 +156,15 @@ def _params_streamline(upq, nu, inv_dt2, grad_div, blend, dphi_q, dtau, dgamma):
 
 # -- momentum equations -----------------------------------------------
 @njit(parallel=True, cache=True, nogil=True)
-def momentum_kernel(phi, dphi, lap_phi, psi, dpsi, wh, G, ue, pe, uoe, upe, mu_q, dmu, f,
-                    rho, inv_dt, inv_dt2, blend, flags, N_e, S_e, JN_e, JS_e):
+def momentum_kernel(phi, dphi, lap_phi, psi, dpsi, wh, G, Glam, ue, pe, uoe, upe, mu_q, dmu, f,
+                    rho, inv_dt, inv_dt2, flags, N_e, S_e, JN_e, JS_e):
     d, ne, nq, n = dphi.shape
     nc = psi.shape[1]
     stab = flags[STAB] != 0
     pspg = flags[PSPG] != 0
     grad_div = flags[GRAD_DIV] != 0
     metric = flags[METRIC] != 0
+    aniso = flags[ANISO] != 0
     follow = flags[FOLLOW] != 0
     transient = flags[TRANSIENT] != 0
     body = flags[BODY] != 0
@@ -247,11 +248,10 @@ def momentum_kernel(phi, dphi, lap_phi, psi, dpsi, wh, G, ue, pe, uoe, upe, mu_q
                     s += phi[q, i] * upe[c, e, i]
                 upq[c] = s
             if metric:
-                tau, gamma = _params_metric(upq, nu, inv_dt2, grad_div, blend, G[e, q], dtau,
-                                            dgamma)
+                tau, gamma = _params_metric(upq, nu, inv_dt2, grad_div, aniso, Glam[e, q],
+                                            G[e, q], dtau, dgamma)
             else:
-                tau, gamma = _params_streamline(upq, nu, inv_dt2, grad_div, blend,
-                                                dphi[:, e, q, :],
+                tau, gamma = _params_streamline(upq, nu, inv_dt2, grad_div, dphi[:, e, q, :],
                                                 dtau, dgamma)
             div = 0.0
             for c in range(d):
@@ -326,7 +326,7 @@ def _stacked(b):
     cache = b.__dict__.get("_numba_stacked")
     if cache is None:
         cache = (np.ascontiguousarray(np.stack(b.dphi)), np.ascontiguousarray(np.stack(b.dpsi)),
-                 np.ascontiguousarray(b.Gmat))
+                 np.ascontiguousarray(b.Gmat), np.ascontiguousarray(b.Glam))
         b.__dict__["_numba_stacked"] = cache
     return cache
 
@@ -350,16 +350,16 @@ def momentum_local(b, U, par, old, mu_q, dmu, body, options):
     else:
         f = dmu_s
     flags = np.array([stab, pspg, options["grad_div"], options["metric"], options["follow"],
-                      transient, body is not None, jac], dtype=np.int64)
+                      transient, body is not None, jac, options.get("aniso", False)],
+                     dtype=np.int64)
     N_e = np.zeros((ne, d * n))
     S_e = np.zeros((ne, L)) if stabilised else np.zeros((1, L))
     JN_e = np.zeros((ne, d * n, d * n)) if jac else np.zeros((1, d * n, d * n))
     JS_e = np.zeros((ne, L, L)) if (jac and stabilised) else np.zeros((1, L, L))
-    dphi, dpsi, G = _stacked(b)
-    momentum_kernel(b.phi, dphi, b.lap_phi, b.psi, dpsi, b.wh, G, ue, pe, uoe, upe,
+    dphi, dpsi, G, Glam = _stacked(b)
+    momentum_kernel(b.phi, dphi, b.lap_phi, b.psi, dpsi, b.wh, G, Glam, ue, pe, uoe, upe,
                     np.ascontiguousarray(mu_q), dmu_s, f, float(options["rho"]),
-                    float(options["inv_dt"]), float(options["inv_dt2"]),
-                    float(_np_kernels.GRAD_DIV_BLEND), flags,
+                    float(options["inv_dt"]), float(options["inv_dt2"]), flags,
                     N_e, S_e, JN_e, JS_e)
     if not stabilised:
         return N_e, None, (JN_e if jac else None), (np.zeros((ne, L, L)) if jac else None)

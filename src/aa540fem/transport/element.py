@@ -175,6 +175,40 @@ def physical_laplacian_nd(inverse, hessians):
     return out
 
 
+def physical_laplacian_curved(inverse, hessians, dnat, xe):
+    """Exact Laplacian of the shape functions on isoparametric (possibly curved)
+    elements, ``(n_elems, nq, n)``.
+
+    The chain rule gives ``lap phi = sum_ab H_ab (grad xi_a . grad xi_b)
+    + sum_a (d phi / d xi_a) lap xi_a``; :func:`physical_laplacian_nd` keeps
+    only the first sum, which is exact on affine elements.  On a curved or
+    distorted element ``lap xi_a = -sum_k (d xi_a / d x_k) sum_bc
+    (d^2 x_k / d xi_b d xi_c) (grad xi_b . grad xi_c)`` does not vanish, and
+    on the thin curved boundary-layer cells of a wall-resolved mesh it is
+    the dominant part (the affine formula is off by up to 1e5 there for
+    ``lap (x^2 + y^2) = 4``).
+
+    ``inverse``: ``d x d`` nested tuple of ``d xi_p / d x_k`` arrays
+    ``(n_elems, nq)``; ``hessians``: natural Hessians of the shape functions in
+    the order of ``_HESSIAN_PAIRS`` (each ``(nq, n)``); ``dnat``: natural
+    gradients (``d`` arrays ``(nq, n)``); ``xe``: nodal coordinates (``d``
+    arrays ``(n_elems, n)``).
+    """
+    d = len(inverse)
+    pairs = _HESSIAN_PAIRS[d]
+    hessians = [np.asarray(h) for h in hessians]
+    # grad xi_b . grad xi_c for every pair, with the factor 2 of the off-diagonal pairs
+    weight = [(1.0 if b == c else 2.0) * sum(inverse[b][m] * inverse[c][m] for m in range(d))
+              for b, c in pairs]
+    out = sum(w[:, :, None] * h[None] for w, h in zip(weight, hessians))
+    # lap xi_a from the second derivatives of the map x(xi)
+    curv = [sum(w * (xe[k] @ h.T) for w, h in zip(weight, hessians)) for k in range(d)]
+    for a in range(d):
+        lap_xi = -sum(inverse[a][k] * curv[k] for k in range(d))         # (ne, nq)
+        out = out + lap_xi[:, :, None] * np.asarray(dnat[a])[None]
+    return out
+
+
 def element_metric_nd(inverse, family):
     """Metric tensor ``G = J^-T T J^-1`` as a ``(n_elems, nq, d, d)`` array
     (see :func:`element_metric`; simplices use ``T`` of the equilateral

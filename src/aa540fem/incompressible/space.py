@@ -11,7 +11,7 @@ from aa540fem.transport.element import (
     element_metric_nd,
     jacobian_nd,
     map_gradients_nd,
-    physical_laplacian_nd,
+    physical_laplacian_curved,
 )
 
 
@@ -112,8 +112,9 @@ class _Block:
         hs, inverse = jacobian_nd(xe, dnat)
         self.dphi = map_gradients_nd(inverse, dnat)
         self.dpsi = map_gradients_nd(inverse, dpnat)
-        self.lap_phi = physical_laplacian_nd(inverse, self.el.hessian(*coords))
+        self.lap_phi = physical_laplacian_curved(inverse, self.el.hessian(*coords), dnat, xe)
         self.Gmat = element_metric_nd(inverse, self.el.family)
+        self.Glam = np.ascontiguousarray(np.linalg.eigvalsh(self.Gmat)[..., 0])  # 4 / h_long^2
         pairs = ((0, 0), (0, 1), (1, 1)) if d == 2 else \
             ((0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2))
         self.G = tuple(np.ascontiguousarray(self.Gmat[..., i, j]) for i, j in pairs)

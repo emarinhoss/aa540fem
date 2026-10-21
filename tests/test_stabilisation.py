@@ -21,7 +21,7 @@ def poiseuille(elem_type, **kw):
 
 @pytest.mark.parametrize("elem_type", ["quad9", "triangle6"])
 @pytest.mark.parametrize("pspg", [False, True])
-@pytest.mark.parametrize("element_length", ["streamline", "metric"])
+@pytest.mark.parametrize("element_length", ["streamline", "metric", "anisotropic"])
 def test_stabilised_poiseuille_stays_exact(elem_type, pspg, element_length):
     # residual consistency: the exact solution has zero strong residual
     # (including the viscous term, which needs the shape-function Hessians)
@@ -60,7 +60,7 @@ def test_jacobian_matches_finite_differences_with_frozen_parameters():
         assert mt.J_S.nnz > 0 and np.abs(mt.S).max() > 0
 
 
-@pytest.mark.parametrize("element_length", ["streamline", "metric"])
+@pytest.mark.parametrize("element_length", ["streamline", "metric", "anisotropic"])
 def test_full_jacobian_with_parameter_derivatives_on_smooth_field(element_length):
     # tau, gamma and the element length are differentiated; on a smooth field
     # (no kinks of |s . grad phi| for the streamline length) the Jacobian is
@@ -168,7 +168,7 @@ def test_ptc_dtau_max_caps_the_pseudo_time_step():
 def test_ptc_with_lagged_stabilisation_reaches_the_same_solution():
     """Lagging tau and gamma inside each pseudo-time step changes the path, not
     the steady solution: the converged state matches Newton's."""
-    for length in ("metric", "streamline"):
+    for length in ("metric", "streamline", "anisotropic"):
         p = cavity(0.01, elems=12, stabilisation=True)
         p.element_length = length
         newton = solve_flow(p, continuation="newton")
@@ -261,3 +261,41 @@ def test_eddy_viscosity_is_clipped_at_the_quadrature_points():
     U = np.zeros(asm.space.ndof)
     U[:mesh.n_nodes] = 1.0
     assert np.isfinite(asm.steady_residual(U, asm.body_load())).all()
+
+
+def test_anisotropic_parameters_equal_metric_on_isotropic_cells():
+    """On square quadrilaterals lambda_min(G) = G_ii, so the long-axis form is the
+    metric form: identical residuals and Jacobians."""
+    rng = np.random.default_rng(5)
+    p = cavity(0.01, elems=6, stabilisation=True)
+    metric = FlowAssembler(p)
+    p.element_length = "anisotropic"
+    aniso = FlowAssembler(p)
+    F = metric.body_load()
+    U = 0.3 * rng.standard_normal(metric.space.ndof)
+    R0, J0 = metric.steady_residual_jacobian(U, F)
+    R1, J1 = aniso.steady_residual_jacobian(U, F)
+    assert np.abs(R0 - R1).max() < 1e-12 * np.abs(R0).max()
+    assert abs(J0 - J1).max() < 1e-12 * abs(J0).max()
+
+
+def test_anisotropic_parameters_keep_streamwise_upwinding_on_thin_cells():
+    """On a cell a thousand times longer than high, the metric tau is set by the
+    viscous limit of the height (no streamwise upwinding at a streamwise cell
+    Peclet number of thousands); the long-axis tau stays at the convective
+    value h_L / (2 |u|) and gamma at h_L |u| / 2."""
+    from aa540fem.backends.numpy_kernels import metric_parameters
+    from aa540fem.incompressible.space import _Block
+
+    mesh = geometry(1.0, 1.0, 1, "quad9")
+    mesh.points[:, 1] *= 1e-3                               # 1 x 1e-3 cell
+    b = _Block(mesh, "quad9", mesh.cells["quad9"], None)
+    nu = 1e-5
+    upq = [np.ones_like(b.X), np.zeros_like(b.X)]          # |u| = 1 along the long axis
+    tau_m, gamma_m, _, _ = metric_parameters(b, upq, nu, 0.0, True)
+    tau_a, gamma_a, _, _ = metric_parameters(b, upq, nu, 0.0, True, aniso=True)
+    assert np.allclose(b.Glam, 4.0)                         # 4 / h_L^2 with h_L = 1
+    assert tau_m.max() < 0.1 * tau_a.min()                  # throttled by the 1e-3 height
+    assert np.allclose(tau_a, 0.5, rtol=1e-6)               # h_L / (2 |u|)
+    assert np.allclose(gamma_a, 0.5)                        # h_L |u| / 2 (Re_h far above 3)
+    assert gamma_m.max() < gamma_a.min() * 1.001

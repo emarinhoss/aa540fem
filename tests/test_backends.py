@@ -59,7 +59,8 @@ def compare(a, b, tol):
     assert np.abs(a - b).max() <= tol * scale
 
 
-OPTIONS = list(itertools.product([False, True], [False, True], ["metric", "streamline"]))
+OPTIONS = list(itertools.product([False, True], [False, True],
+                                ["metric", "streamline", "anisotropic"]))
 
 
 @pytest.mark.parametrize("name,mesh", list(meshes()))
@@ -119,7 +120,7 @@ def test_backend_selection(monkeypatch):
         assembly_backend("cuda")
 
 
-@pytest.mark.parametrize("element_length", ["metric", "streamline"])
+@pytest.mark.parametrize("element_length", ["metric", "streamline", "anisotropic"])
 def test_spalart_allmaras_kernel_matches_numpy(element_length):
     from aa540fem.turbulence.spalart_allmaras import SpalartAllmaras, SpalartAllmarasSolver
 

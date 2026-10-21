@@ -112,7 +112,7 @@ def test_numba_matches_numpy_on_prisms():
     rng = np.random.default_rng(1)
     N = m3.n_nodes
     for stab, pspg, length in itertools.product([False, True], [False, True],
-                                               ["metric", "streamline"]):
+                                               ["metric", "streamline", "anisotropic"]):
         prob = FlowProblem(m3, mu=1e-3, rho=1.2, stabilisation=stab, pspg=pspg,
                            element_length=length, eddy_viscosity=1e-3 * (1 + m3.y),
                            body_force=lambda x, y, z: (np.sin(x), np.cos(y), np.sin(z)),

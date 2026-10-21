@@ -165,9 +165,10 @@ class SpalartAllmarasSolver:
             from aa540fem.backends.numba_sa import constants, sa_local
 
             c = constants(self.model, FD_STEP)
-            metric = self.element_length == "metric"
+            metric = self.element_length in ("metric", "anisotropic")
+            aniso = self.element_length == "anisotropic"
             for b in self.blocks:
-                Re_, Je = sa_local(b, nt, self.vel, self.distance, c, supg, metric)
+                Re_, Je = sa_local(b, nt, self.vel, self.distance, c, supg, metric, aniso)
                 R += scatter_vector(self.N, b.conn, Re_)
                 J_e.append(Je)
         else:
@@ -230,11 +231,14 @@ class SpalartAllmarasSolver:
               + sum(np.einsum("eq,eqi,eqj->eij", wh * D, b.dphi[k], b.dphi[k]) for k in range(d))
               + np.einsum("eq,eqi,qj->eij", wh * dD, grad_i, b.phi))
         if supg:
-            if self.element_length == "metric":
+            if self.element_length in ("metric", "anisotropic"):
                 G = b.Gmat
                 gu = [sum(G[..., c, k] * uq[k] for k in range(d)) for c in range(d)]
                 q2 = sum(uq[c] * gu[c] for c in range(d))                   # u . G u
-                gg = np.einsum("...ij,...ij->...", G, G)                    # G : G
+                if self.element_length == "anisotropic":                     # long-axis limit
+                    gg = d * b.Glam ** 2
+                else:
+                    gg = np.einsum("...ij,...ij->...", G, G)                # G : G
                 tau = 1.0 / np.sqrt(q2 + 0.5 * D ** 2 * gg)
             else:
                 umag = np.sqrt(sum(u * u for u in uq))

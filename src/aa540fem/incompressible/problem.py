@@ -10,7 +10,7 @@ from aa540fem.core.util import accepts_time, call_coeff_nd
 
 OPEN = "open"
 SCHEMES = ("rk45", "theta")
-ELEMENT_LENGTHS = ("streamline", "metric")
+ELEMENT_LENGTHS = ("streamline", "metric", "anisotropic")
 
 
 @dataclass
@@ -56,7 +56,19 @@ class FlowProblem:
                   uses Tezduyar's element length in the flow direction,
                   ``h = 2 / sum_i |s . grad phi_i|``, which jumps between the
                   cell length and its height with the slightest rotation of
-                  the velocity on such cells and stalls Newton there.
+                  the velocity on such cells and stalls Newton there;
+                  ``"anisotropic"`` is the metric form with the viscous limit of
+                  ``tau`` and the grad-div length taken along the long axis of
+                  the cell (``lambda_min(G) = 4 / h_L^2``):
+                  ``tau = [(2/dt)^2 + u.G u + (d/2) nu^2 lambda_min^2]^(-1/2)``,
+                  ``gamma = (h_L |u| / 2) min(1, Re_h / 3)``.  It equals
+                  ``"metric"`` on isotropic quadrilaterals and hexahedra; on the
+                  thin cells of a wall-resolved boundary layer ``nu^2 G:G`` is
+                  set by the wall-normal height and leaves the streamwise
+                  convection there unstabilised (cell Peclet numbers of
+                  hundreds), which drives a streamwise odd-even pressure mode
+                  through the whole layer stack, while the long-axis form keeps
+                  the upwinding and stays smooth in the velocity.
     """
 
     mesh: Mesh

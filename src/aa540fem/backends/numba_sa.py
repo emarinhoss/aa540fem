@@ -87,7 +87,7 @@ def _grad2(g, d):
 
 
 @njit(parallel=True, cache=True, nogil=True)
-def sa_kernel(phi, dphi, psi, wh, G, nte, ue, de, c, supg, metric, R_e, J_e):
+def sa_kernel(phi, dphi, psi, wh, G, Glam, nte, ue, de, c, supg, metric, aniso, R_e, J_e):
     d, ne, nq, n = dphi.shape
     nc = psi.shape[1]
     fd = c[FD_STEP]
@@ -169,6 +169,9 @@ def sa_kernel(phi, dphi, psi, wh, G, nte, ue, de, c, supg, metric, R_e, J_e):
                         for b_ in range(d):
                             q2 += uq[a_] * G[e, q, a_, b_] * uq[b_]
                             gg += G[e, q, a_, b_] * G[e, q, a_, b_]
+                    if aniso:                       # viscous limit along the long cell axis
+                        lam = Glam[e, q]
+                        gg = d * lam * lam
                     tau = 1.0 / np.sqrt(q2 + 0.5 * D * D * gg)
                 else:
                     umag2 = 0.0
@@ -199,19 +202,17 @@ def sa_kernel(phi, dphi, psi, wh, G, nte, ue, de, c, supg, metric, R_e, J_e):
                                          + dD * grad_i[i] * phi[q, j])
 
 
-def sa_local(b, nt, vel, distance, c, supg, metric):
+def sa_local(b, nt, vel, distance, c, supg, metric, aniso=False):
     """Element residual ``(ne, n)`` and Jacobian ``(ne, n, n)`` with the numba kernel;
     ``vel`` is the ``(d, N)`` nodal velocity."""
     ne, n = b.conn.shape
     R_e = np.zeros((ne, n))
     J_e = np.zeros((ne, n, n))
-    cache = b.__dict__.get("_numba_stacked")
-    if cache is None:
-        cache = (np.ascontiguousarray(np.stack(b.dphi)), np.ascontiguousarray(np.stack(b.dpsi)),
-                 np.ascontiguousarray(b.Gmat))
-        b.__dict__["_numba_stacked"] = cache
-    dphi, _, G = cache
-    sa_kernel(b.phi, dphi, b.psi, b.wh, G, np.ascontiguousarray(nt[b.conn]),
+    from aa540fem.backends.numba_kernels import _stacked
+
+    dphi, _, G, Glam = _stacked(b)
+    sa_kernel(b.phi, dphi, b.psi, b.wh, G, Glam, np.ascontiguousarray(nt[b.conn]),
               np.ascontiguousarray(np.asarray(vel)[:, b.conn]),
-              np.ascontiguousarray(distance[b.pconn]), c, bool(supg), bool(metric), R_e, J_e)
+              np.ascontiguousarray(distance[b.pconn]), c, bool(supg), bool(metric), bool(aniso),
+              R_e, J_e)
     return R_e, J_e

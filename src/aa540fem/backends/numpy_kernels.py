@@ -116,9 +116,13 @@ def momentum_local(b, U, par, old, mu_q, dmu, body, options, backend="numpy"):
 
     # stabilisation parameters from the parameter state
     upq = [par[udof[c]] @ b.phi.T for c in range(d)]
-    parameters = metric_parameters if options["metric"] else streamline_parameters
-    tau, gamma, dtau_d, dgamma_d = parameters(b, upq, nu, options["inv_dt2"],
-                                              options["grad_div"])
+    if options["metric"]:
+        tau, gamma, dtau_d, dgamma_d = metric_parameters(b, upq, nu, options["inv_dt2"],
+                                                         options["grad_div"],
+                                                         options.get("aniso", False))
+    else:
+        tau, gamma, dtau_d, dgamma_d = streamline_parameters(b, upq, nu, options["inv_dt2"],
+                                                             options["grad_div"])
     follow = options["follow"]
 
     S_e = np.zeros((ne, L))
@@ -168,25 +172,11 @@ def momentum_local(b, U, par, old, mu_q, dmu, body, options, backend="numpy"):
 
 
 # -- stabilisation parameters -----------------------------------------
-# Half-width of the band in x = Re_h / 3 over which the grad-div switch
-# min(1, x) is blended quadratically (C1 with a Lipschitz derivative; exactly
-# min(1, x) outside 1 - w < x < 1 + w).  The kink of the plain min sits inside
-# every wall-resolved boundary layer, where it leaves Newton without a descent
-# direction; 0 restores the plain min.
-GRAD_DIV_BLEND = 0.0
-
-
-def grad_div_switch(x, w=None):
-    """``m(x)``, the (blended) ``min(1, x)`` of the grad-div parameter, and
-    ``m(x) + x m'(x)``, the factor of ``d(h|u|/2)`` in ``d gamma``."""
-    w = GRAD_DIV_BLEND if w is None else w
-    if w <= 0.0:
-        low = x < 1.0
-        return np.where(low, x, 1.0), np.where(low, 2.0 * x, 1.0)
-    t = np.clip(x - 1.0 + w, 0.0, 2.0 * w)               # 0 below the band, 2w above
-    m = np.where(x >= 1.0 + w, 1.0, x - t * t / (4.0 * w))
-    mp = np.where(x >= 1.0 + w, 0.0, 1.0 - t / (2.0 * w))
-    return m, m + x * mp
+def grad_div_switch(x):
+    """``m(x) = min(1, x)``, the switch of the grad-div parameter at ``Re_h = 3``,
+    and ``m(x) + x m'(x)``, the factor of ``d(h|u|/2)`` in ``d gamma``."""
+    low = x < 1.0
+    return np.where(low, x, 1.0), np.where(low, 2.0 * x, 1.0)
 
 
 def streamline_parameters(b, upq, nu, inv_dt2, grad_div):
@@ -229,7 +219,7 @@ def streamline_parameters(b, upq, nu, inv_dt2, grad_div):
     return tau, gamma, dtau_d, dgamma_d
 
 
-def metric_parameters(b, upq, nu, inv_dt2, grad_div):
+def metric_parameters(b, upq, nu, inv_dt2, grad_div, aniso=False):
     """``tau`` and ``gamma`` from the element metric tensor ``G`` (smooth in ``u``).
 
     ``tau = [(2/dt)^2 + u.G u + nu^2 G:G / 2]^(-1/2)`` (Shakib 1991, Bazilevs
@@ -239,14 +229,31 @@ def metric_parameters(b, upq, nu, inv_dt2, grad_div):
     ``gamma = (h_s |u| / 2) min(1, Re_h / 3)`` with ``h_s |u| / 2 = |u|^2 / q``,
     ``q = sqrt(u.G u)``, ``Re_h = |u|^2 / (nu q)``.  Returns ``tau, gamma``
     and their derivatives with respect to the velocity components.
+
+    ``aniso``: the viscous limit and the grad-div length along the long axis
+    of the cell (``lambda_min(G) = 4 / h_L^2``, see ``FlowProblem``):
+    ``tau = [(2/dt)^2 + u.G u + (d/2) nu^2 lambda_min^2]^(-1/2)``,
+    ``gamma = (h_L |u| / 2) min(1, Re_h / 3)``, ``Re_h = h_L |u| / (2 nu)``.
     """
     d = b.dim
     G = b.Gmat
     gu = [sum(G[..., c, k] * upq[k] for k in range(d)) for c in range(d)]   # G u
     q2 = sum(upq[c] * gu[c] for c in range(d))                              # u . G u
-    gg = np.einsum("...ij,...ij->...", G, G)                                # G : G
-    tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * nu ** 2 * gg)
+    if aniso:
+        lam = b.Glam                                                        # 4 / h_L^2
+        tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * d * nu ** 2 * lam ** 2)
+    else:
+        gg = np.einsum("...ij,...ij->...", G, G)                            # G : G
+        tau = 1.0 / np.sqrt(inv_dt2 + q2 + 0.5 * nu ** 2 * gg)
     dtau_d = [-tau ** 3 * gu[c] for c in range(d)]
+    if aniso and grad_div:
+        umag = np.sqrt(sum(u * u for u in upq))
+        hu2 = umag / np.sqrt(lam)                                           # h_L |u| / 2
+        m, fac = grad_div_switch(hu2 / (3.0 * nu))
+        safe = np.where(umag > 0, umag, 1.0)
+        dgamma_d = [np.where(umag > 0, fac * upq[c] / (safe * np.sqrt(lam)), 0.0)
+                    for c in range(d)]
+        return tau, hu2 * m, dtau_d, dgamma_d
     umag2 = sum(u * u for u in upq)
     moving = q2 > 0
     q2s = np.where(moving, q2, 1.0)

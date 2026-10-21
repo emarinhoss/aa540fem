@@ -73,7 +73,7 @@ def extruded_pair(elems=4):
     return mesh2, mesh3, u2, u3
 
 
-@pytest.mark.parametrize("element_length", ["streamline", "metric"])
+@pytest.mark.parametrize("element_length", ["streamline", "metric", "anisotropic"])
 def test_sa_jacobian_matches_finite_differences_in_3d(element_length):
     _, mesh3, _, u3 = extruded_pair(2)
     sa = SpalartAllmarasSolver(mesh3, SpalartAllmaras(NU), ["bottom"],
@@ -91,7 +91,7 @@ def test_sa_jacobian_matches_finite_differences_in_3d(element_length):
             assert np.linalg.norm(J @ d - fd) < tol * np.linalg.norm(fd)
 
 
-@pytest.mark.parametrize("element_length", ["streamline", "metric"])
+@pytest.mark.parametrize("element_length", ["streamline", "metric", "anisotropic"])
 def test_sa_numba_matches_numpy_in_3d(element_length):
     pytest.importorskip("numba")
     _, mesh3, _, u3 = extruded_pair(2)
