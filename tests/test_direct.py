@@ -82,3 +82,36 @@ def test_memory_estimate_is_within_a_factor_of_the_factors():
     assert estimate_direct_memory(A.nnz, n=A.shape[0]) == estimate
     with pytest.raises(ValueError):
         estimate_direct_memory(A.nnz)
+
+
+def test_robust_mumps_retry_on_a_badly_scaled_projection_matrix():
+    """The projection matrix [[M, -B^T], [B, 0]] of a mesh whose cells span many
+    orders of magnitude overflows MUMPS's default workspace (INFOG(1) = -9);
+    factorise() retries with more workspace and iterative refinement and stays
+    on MUMPS, and the retry leaves the global PETSc options as it found them."""
+    pytest.importorskip("petsc4py")
+    from aa540fem.linalg.direct import PETScFactorisation, mumps_available
+
+    if not mumps_available():
+        pytest.skip("PETSc without MUMPS")
+    from petsc4py import PETSc
+
+    # a channel graded geometrically towards the wall: first cell 1e-7 of the height
+    mesh = geometry(1.0, 1.0, 12, "quad9")
+    eta = mesh.points[:, 1]
+    mesh.points[:, 1] = (np.exp(16.0 * eta) - 1.0) / (np.exp(16.0) - 1.0)
+    asm = FlowAssembler(FlowProblem(mesh, mu=1e-3, rho=1.0,
+                                    bc={"left": (1.0, 0.0), "bottom": (0.0, 0.0),
+                                        "top": (1.0, 0.0)}))
+    fixed, vals = asm.dirichlet()
+    A = eliminate(asm.pattern.matrix(asm.M_data - asm.BT_data + asm.B_data), fixed).K_bc
+    b = np.random.default_rng(1).standard_normal(A.shape[0])
+    robust = PETScFactorisation(A, robust=True)
+    assert np.linalg.norm(A @ robust.solve(b) - b) / np.linalg.norm(b) < 1e-8
+    opts = PETSc.Options()
+    assert not opts.hasName("mat_mumps_icntl_10") and opts.getInt("mat_mumps_icntl_14") == 40
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                      # no fallback to SuperLU
+        f = factorise(A, "petsc")
+    assert f.backend == "petsc"
+    assert np.linalg.norm(A @ f.solve(b) - b) / np.linalg.norm(b) < 1e-8

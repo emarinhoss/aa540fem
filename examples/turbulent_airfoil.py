@@ -60,8 +60,23 @@ TMR_CFL3D = {0.0: (0.0, 0.00819), 10.0: (1.0909, 0.01231), 15.0: (1.5461, 0.0212
 TMR_FUN3D = {0.0: (0.0, 0.00812), 10.0: (1.0983, 0.01242), 15.0: (1.5547, 0.02159)}
 
 
+def turbulent_start(mesh, nu, u_tau=0.04, delta=0.03):
+    """Initial ``nu_tilde`` of a turbulent boundary layer: the two-layer mixing-length
+    eddy viscosity ``min(kappa u_tau d, 0.0168 U delta*)`` (inner layer, Clauser
+    outer level with ``delta* = delta / 8``) tapered to the free-stream ``3 nu``
+    beyond ``delta``.  ``u_tau = 0.04`` is ``Cf`` about 3e-3.  Starting the RANS
+    coupling from it makes the first flow solve a turbulent, steady problem
+    instead of the laminar, separated (and unsteady) flow a viscosity ramp
+    passes through at incidence."""
+    d = mesh.wall_distance("airfoil")
+    nut = np.minimum(0.41 * u_tau * d, 0.0168 * delta / 8.0) * np.exp(-(d / delta) ** 2)
+    nt = nut + 3.0 * nu
+    nt[mesh.bc_nodes["airfoil"]] = 0.0
+    return nt
+
+
 def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
-        verbose=True, restart=None, **kw):
+        verbose=True, restart=None, turbulent=False, **kw):
     mesh = read_mesh(mesh_file)
     nu = 1.0 / re
     a = np.radians(alpha)
@@ -92,6 +107,8 @@ def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
         d = mesh.wall_distance("airfoil")
         damp = 1.0 - np.exp(-d / 0.01)
         kw.setdefault("U0", lambda x, y: (ux * damp, uy * damp))  # evaluated at the nodes
+        if turbulent:
+            kw["nu_tilde0"] = turbulent_start(mesh, nu)
     # before the eddy viscosity develops, the laminar trailing edge is weakly
     # unsteady and the steady residual stalls near 1e-4 of the start: accept
     # the flow there (the coupled outer iterations tighten it warm-started).
@@ -112,7 +129,8 @@ def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
     fo.update(kw.pop("flow_options", None) or {})
     kw["flow_options"] = fo
     if kw.get("viscosity_ramp") is None:
-        kw["viscosity_ramp"] = (1.0,) if restart is not None else (100.0, 10.0, 1.0)
+        kw["viscosity_ramp"] = ((1.0,) if restart is not None or turbulent
+                                else (100.0, 10.0, 1.0))
     # the transitional states of the viscosity ramp can stall the SA sub-solve
     # in a pseudo-time limit cycle: bound it and let the coupling continue
     kw.setdefault("sa_max_steps", 60)
@@ -169,6 +187,9 @@ def main(argv=None):
     parser.add_argument("--outdir", default="turb_airfoil_out")
     parser.add_argument("--restart", default=None, metavar="FILE",
                         help="state_a<alpha>.npz of a previous run: skip the viscosity ramp")
+    parser.add_argument("--turbulent-start", action="store_true",
+                        help="start from a mixing-length eddy viscosity at the final Reynolds "
+                             "number instead of the viscosity ramp")
     parser.add_argument("--tmr-cp", default=None, metavar="FILE",
                         help="overlay the TMR Cp file n0012cp_cfl3d_sa.dat on the plot")
     parser.add_argument("--no-plot", action="store_true")
@@ -184,6 +205,7 @@ def main(argv=None):
     t0 = time.time()
     rans, res = run(args.mesh, args.alpha, args.re, verbose=args.verbose,
                     max_outer=args.max_outer, tol=args.tol, restart=args.restart,
+                    turbulent=args.turbulent_start,
                     viscosity_ramp=(tuple(args.viscosity_ramp)
                                     if args.viscosity_ramp is not None else None),
                     flow_options={"continuation": args.continuation})

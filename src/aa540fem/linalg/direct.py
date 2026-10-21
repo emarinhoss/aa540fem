@@ -91,7 +91,13 @@ class PETScFactorisation:
 
     backend = "petsc"
 
-    def __init__(self, A, solver_type: str | None = None, threads: int | None = None):
+    def __init__(self, A, solver_type: str | None = None, threads: int | None = None,
+                 robust: bool = False):
+        """``robust``: MUMPS with five times the default extra workspace and two
+        steps of iterative refinement per solve, for matrices whose entries span
+        many orders of magnitude (the delayed pivots of a wall-resolved mesh's
+        saddle-point systems overflow the default workspace, ``INFOG(1) = -9``,
+        and leave about 1e-7 of residual)."""
         from petsc4py import PETSc
 
         A = sp.csr_matrix(A)
@@ -100,7 +106,12 @@ class PETScFactorisation:
         self.solver_type = solver_type
         opts = PETSc.Options()
         if solver_type == "mumps":
-            opts["mat_mumps_icntl_14"] = 40          # 40 % extra workspace for the pivoting
+            # extra workspace for the pivoting (per cent)
+            opts["mat_mumps_icntl_14"] = 200 if robust else 40
+            if robust:
+                opts["mat_mumps_icntl_10"] = -2          # two iterative refinement steps
+            else:
+                opts.delValue("mat_mumps_icntl_10")
             # MUMPS OpenMP threads need a PETSc built --with-openmp; the BLAS
             # threads apply regardless, so the option is tried and dropped
             # when the build lacks it
@@ -128,6 +139,9 @@ class PETScFactorisation:
             opts.delValue("mat_mumps_use_omp_threads")
             pc.setFromOptions()
             pc.setUp()
+        if robust:                                   # leave the global database clean
+            opts.delValue("mat_mumps_icntl_10")
+            opts["mat_mumps_icntl_14"] = 40
         self._x = self.A.createVecRight()
         self._b = self.A.createVecRight()
         try:
@@ -149,7 +163,8 @@ def factorise(A, backend: str | None = None, threads: int | None = None, check: 
     :func:`direct_backend`).  With ``check`` the first backend's solution of
     a random right-hand side is verified and SuperLU is used instead when
     the relative residual exceeds 1e-8 (static pivoting on the zero pressure
-    block of a saddle-point matrix can fail silently).
+    block of a saddle-point matrix can fail silently); MUMPS is retried once
+    with more workspace and iterative refinement before that.
     """
     name = direct_backend(backend)
     if name == "petsc":
@@ -164,8 +179,16 @@ def factorise(A, backend: str | None = None, threads: int | None = None, check: 
         if check:
             rng = np.random.default_rng(0)
             b = rng.standard_normal(A.shape[0])
-            x = f.solve(b)
-            res = np.linalg.norm(A @ x - b) / np.linalg.norm(b)
+
+            def accuracy(f):
+                x = f.solve(b)
+                return np.linalg.norm(A @ x - b) / np.linalg.norm(b)
+
+            res = accuracy(f)
+            if (not np.isfinite(res) or res > 1e-8) and not is_parallel() \
+                    and f.solver_type == "mumps":
+                f = PETScFactorisation(A, threads=threads, robust=True)
+                res = accuracy(f)
             if not np.isfinite(res) or res > 1e-8:
                 warnings.warn(f"PETSc/{f.solver_type} factorisation inaccurate "
                               f"(relative residual {res:.1e}); using SuperLU", stacklevel=2)
