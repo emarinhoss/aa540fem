@@ -236,3 +236,28 @@ def test_stabilised_time_stepping_both_schemes():
     assert rk.info["steps"] > 5 and np.isfinite(rk.final.u).all()
     B = rk.assembler.Bx + rk.assembler.By
     assert np.linalg.norm(B @ rk.final.U) < 1e-9
+
+
+def test_eddy_viscosity_is_clipped_at_the_quadrature_points():
+    """A sharp non-negative nodal eddy viscosity undershoots below zero between
+    the nodes; the assembler clips it there, so the effective viscosity never
+    drops below the laminar one and the grad-div parameter stays bounded by
+    h|u|/2 (a negative viscosity made the cell Reynolds number negative and
+    gamma unbounded)."""
+    mesh = geometry(1.0, 1.0, 4, "triangle6")
+    spike = np.zeros(mesh.n_nodes)
+    spike[np.argmin(np.hypot(mesh.x - 0.5, mesh.y - 0.5))] = 1.0      # one-node spike
+    mu = 1e-3
+    p = FlowProblem(mesh, mu=mu, rho=1.0, stabilisation=True, eddy_viscosity=spike,
+                    bc={"left": (1.0, 0.0), "bottom": (0.0, 0.0)})
+    asm = FlowAssembler(p)
+    raw = min(float((spike[b.conn] @ b.phi.T).min()) for b in asm.blocks)
+    assert raw < 0                                  # the interpolant does undershoot
+    for b in asm.blocks:
+        mu_q, dmu = asm.viscosity(b)
+        assert mu_q.min() >= mu
+        clipped = mu_q == mu
+        assert all(np.all(g[clipped] == 0.0) for g in dmu)
+    U = np.zeros(asm.space.ndof)
+    U[:mesh.n_nodes] = 1.0
+    assert np.isfinite(asm.steady_residual(U, asm.body_load())).all()

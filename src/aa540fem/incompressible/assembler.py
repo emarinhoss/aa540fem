@@ -90,14 +90,26 @@ class FlowAssembler:
     # -- coefficients -------------------------------------------------
     def viscosity(self, b):
         """``mu_eff`` and the tuple of its ``d`` gradient components at the
-        quadrature points of block ``b``."""
+        quadrature points of block ``b``.
+
+        The eddy viscosity is interpolated from the nodes and clipped at zero
+        (its gradient with it): the quadratic interpolant of a non-negative
+        nodal field undershoots where the field varies sharply, and a total
+        viscosity below zero would turn the cell Reynolds number of the
+        grad-div parameter negative, where ``min(1, Re_h / 3)`` no longer caps
+        it (an under-resolved turbulent wake in the coarse far-field cells
+        of the airfoil mesh raised the stabilisation residual a millionfold
+        this way)."""
         mu = self.problem.mu
         if self.mu_t is None:
             zero = np.zeros_like(b.X)
             return np.full_like(b.X, mu), (zero,) * b.dim
         mt = self.mu_t[b.conn]
-        return (mu + mt @ b.phi.T,
-                tuple(np.einsum("eqi,ei->eq", b.dphi[k], mt) for k in range(b.dim)))
+        mt_q = mt @ b.phi.T
+        positive = mt_q > 0.0
+        return (mu + np.where(positive, mt_q, 0.0),
+                tuple(np.where(positive, np.einsum("eqi,ei->eq", b.dphi[k], mt), 0.0)
+                      for k in range(b.dim)))
 
     def _body_force(self, b, t):
         if self.problem.body_force is None:
