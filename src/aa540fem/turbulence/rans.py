@@ -45,7 +45,8 @@ class RANSSolution:
 def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                max_outer: int = 40, tol: float = 1e-3, relax: float = 0.7, verbose=False,
                force_tag=None, U0=None, viscosity_ramp=(1.0,),
-               flow_options=None, nu_tilde0=None, sa_max_steps: int = 200) -> RANSSolution:
+               flow_options=None, nu_tilde0=None, sa_max_steps: int = 200,
+               warm_dtau0: float | None = None) -> RANSSolution:
     """Steady RANS solution with the Spalart-Allmaras model.
 
     Parameters
@@ -73,6 +74,16 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                   wall-resolved meshes.
     flow_options : extra keyword arguments for :func:`solve_flow`
                   (e.g. ``dtau0`` of the pseudo-transient continuation).
+    warm_dtau0  : initial pseudo-time step (CFL) of the flow solves after the
+                  first, which start from the previous outer iteration (default:
+                  the ``dtau0`` of ``flow_options``).  A large value suits them:
+                  from a nearly converged state a small step marches through
+                  the transient caused by the eddy-viscosity update, where the
+                  residual first grows and the step control shrinks the step
+                  further, while a large step -- with ``lag_stabilisation`` a
+                  Newton step with frozen stabilisation parameters -- cuts the
+                  residual directly; rejected steps still fall back to smaller
+                  ones.
     nu_tilde0   : initial nodal working variable (default: ``nu_tilde_inf``
                   everywhere), e.g. a converged solution on a related mesh.
     sa_max_steps : pseudo-transient step budget of each SA sub-solve; an
@@ -98,11 +109,11 @@ def solve_rans(problem: FlowProblem, wall_tags, nu_tilde_inf=None, model=None,
                                  max_outer if last else 6, tol if last else 10 * tol, relax,
                                  verbose, force_tag, U0 if result is None else result.flow.U,
                                  nu_tilde0 if result is None else result.nu_tilde,
-                                 flow_options, sa_max_steps)
+                                 flow_options, sa_max_steps, warm_dtau0)
         problem.mu = mu_target
         return result
     return _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, verbose,
-                       force_tag, U0, nu_tilde0, flow_options, sa_max_steps)
+                       force_tag, U0, nu_tilde0, flow_options, sa_max_steps, warm_dtau0)
 
 
 def _initial_vector(problem, U0):
@@ -117,8 +128,10 @@ def _initial_vector(problem, U0):
 
 
 def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, verbose,
-                force_tag, U0, nu_tilde0, flow_options=None, sa_max_steps=200):
+                force_tag, U0, nu_tilde0, flow_options=None, sa_max_steps=200, warm_dtau0=None):
     flow_options = {"rtol": 1e-5, "atol": 1e-12, "continuation": "auto", **(flow_options or {})}
+    warm_options = (flow_options if warm_dtau0 is None
+                    else {**flow_options, "dtau0": warm_dtau0})
     U0 = _initial_vector(problem, U0)
     mesh = problem.mesh
     nu = problem.mu / problem.rho
@@ -171,7 +184,7 @@ def _solve_rans(problem, wall_tags, nu_tilde_inf, model, max_outer, tol, relax, 
         change = np.linalg.norm(nu_t_new - nu_t) / max(np.linalg.norm(nu_t_new), 1e-300)
         nu_t = nu_t_new
         problem.eddy_viscosity = problem.rho * nu_t
-        flow = solve_flow(problem, U0=flow.U, verbose=inner, **flow_options)
+        flow = solve_flow(problem, U0=flow.U, verbose=inner, **warm_options)
         force = flow.forces(force_tag)
         history.append((k, change, force, res.iterations, res.converged, flow.info["iterations"]))
         if verbose:
