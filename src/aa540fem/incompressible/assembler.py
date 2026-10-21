@@ -214,17 +214,20 @@ class FlowAssembler:
         return dirichlet_dofs(self.problem, self.space, t, rate)
 
     # -- steady operator ----------------------------------------------
-    def steady_residual(self, U, F, with_pressure=True, t=0.0):
-        """``R = K u + N(u) + S(u) - B^T p - F`` and ``B u`` (no Jacobian)."""
-        mt = self.momentum_terms(U, t=t, jacobian=False)
+    def steady_residual(self, U, F, with_pressure=True, t=0.0, param_state=None):
+        """``R = K u + N(u) + S(u) - B^T p - F`` and ``B u`` (no Jacobian); with
+        ``param_state`` the stabilisation parameters are evaluated there."""
+        mt = self.momentum_terms(U, t=t, jacobian=False, param_state=param_state)
         R = self.K @ U + mt.N + mt.S - F
         if with_pressure:
             R = R - self.BT @ U + self.B @ U
         return R
 
-    def steady_residual_jacobian(self, U, F, with_pressure=True, t=0.0):
-        """``R = K u + N(u) + S(u) - B^T p - F`` and ``B u`` with the Jacobian."""
-        mt = self.momentum_terms(U, t=t)
+    def steady_residual_jacobian(self, U, F, with_pressure=True, t=0.0, param_state=None):
+        """``R = K u + N(u) + S(u) - B^T p - F`` and ``B u`` with the Jacobian; with
+        ``param_state`` the stabilisation parameters are frozen at that state
+        (their derivatives drop out of the Jacobian)."""
+        mt = self.momentum_terms(U, t=t, param_state=param_state)
         R = self.K @ U + mt.N + mt.S - F
         J_data = self.K_data + mt.JN_data + mt.JS_data
         if with_pressure:

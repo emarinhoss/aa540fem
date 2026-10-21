@@ -12,7 +12,8 @@ from aa540fem.linalg.solvers import LinearSolver
 
 def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9, atol=1e-11,
                      dtau0=0.01, max_steps=200, dtau_max=1e6, inner_newton=10,
-                     inner_rtol=1e-2, verbose=False, residual=None) -> NewtonResult:
+                     inner_rtol=1e-2, verbose=False, residual=None,
+                     lagged=None) -> NewtonResult:
     """Pseudo-transient continuation: ``R(U) + (M / dtau)(U - U_k) = 0``.
 
     Each pseudo-time step is a backward-Euler step solved with up to
@@ -25,6 +26,14 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
     into plain Newton as the residual vanishes.  ``M`` is the mass
     matrix (zero pressure block), so the continuity equation is never
     relaxed.
+
+    ``lagged``: optional callable ``(V, U_k, jacobian) -> (R, J)`` giving the
+    residual with some coefficients frozen at the start ``U_k`` of the step
+    (``J`` is ``None`` when ``jacobian`` is false).  The inner Newton then
+    solves the step with those coefficients lagged, which removes their
+    nonlinearity from the implicit step, while the step size control and the
+    convergence test use the true residual.  At a steady state the lagged and
+    true residuals coincide, so the converged solution is unchanged.
     """
     U = np.array(U, dtype=float, copy=True)
     fixed = np.asarray(fixed, dtype=int)
@@ -50,7 +59,13 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
     while k < max_steps and r > target:
         # backward-Euler step from U with Newton on G(V) = R(V) + M (V - U)/dtau;
         # the step is accepted only if the inner iteration actually converged
-        V, RV, JV = U, R, J
+        if lagged is not None:
+            RV, JV = lagged(U, U, True)
+            RV = np.array(RV, dtype=float, copy=True)
+            RV[fixed] = 0.0
+            V = U
+        else:
+            V, RV, JV = U, R, J
         step_res = None
         ok = False
         for inner in range(inner_newton + 1):
@@ -67,7 +82,12 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
             if inner == inner_newton:
                 break                           # out of inner iterations: reject
             if JV is None:
-                RV, JV, _ = evaluate(V)
+                if lagged is not None:
+                    RV, JV = lagged(V, U, True)
+                    RV = np.array(RV, dtype=float, copy=True)
+                    RV[fixed] = 0.0
+                else:
+                    RV, JV, _ = evaluate(V)
             elim = eliminate(add_matrices(JV, M, 1.0 / dtau), fixed)
             solver = (method(elim.K_bc) if callable(method)
                       else LinearSolver(elim.K_bc, method, symmetric=False))
@@ -75,7 +95,13 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
             alpha = 1.0
             for _ in range(4):                  # backtracking on the step residual
                 Vn = V + alpha * delta
-                RVn, JVn, rVn = evaluate(Vn, jacobian=(alpha == 1.0))
+                if lagged is not None:
+                    RVn, JVn = lagged(Vn, U, alpha == 1.0)
+                    RVn = np.array(RVn, dtype=float, copy=True)
+                    RVn[fixed] = 0.0
+                    rVn = np.linalg.norm(RVn)
+                else:
+                    RVn, JVn, rVn = evaluate(Vn, jacobian=(alpha == 1.0))
                 Gn = RVn + M @ ((Vn - U) / dtau)
                 Gn[fixed] = 0.0
                 if np.isfinite(rVn) and np.linalg.norm(Gn) < g:
@@ -92,7 +118,9 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
             if verbose:
                 print(f"  PTC step rejected, dtau = {dtau:.3e}")
             continue
-        if JV is None:                          # Jacobian of the accepted state
+        if lagged is not None:                  # true residual of the accepted state
+            RV, JV, _ = evaluate(V, jacobian=False)
+        elif JV is None:                        # Jacobian of the accepted state
             RV, JV, _ = evaluate(V)
         rn = np.linalg.norm(RV)
         ratio = r / max(rn, 1e-300)

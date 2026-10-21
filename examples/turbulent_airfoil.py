@@ -104,8 +104,11 @@ def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
     # dtau0 well below 1: at incidence the start is shedding-unsteady and PTC
     # rejections (a full inner Newton each) are far dearer than a few extra
     # small accepted steps while SER grows the pseudo-time step back
+    # lag_stabilisation: the grad-div parameter of the 4e-6-thick wall cells
+    # depends so steeply on the near-wall velocity that the implicit pseudo-time
+    # step's Newton stalls at any step size; frozen per step it converges
     fo = {"rtol": 5e-4, "atol": 1e-5 if restart is None else 1e-8, "max_ptc": 60,
-          "dtau0": 0.1}
+          "dtau0": 0.1, "lag_stabilisation": True}
     fo.update(kw.pop("flow_options", None) or {})
     kw["flow_options"] = fo
     if kw.get("viscosity_ramp") is None:

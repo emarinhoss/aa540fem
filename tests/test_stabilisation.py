@@ -165,6 +165,39 @@ def test_ptc_dtau_max_caps_the_pseudo_time_step():
     assert max(capped.info["dtau"]) <= 0.5
 
 
+def test_ptc_with_lagged_stabilisation_reaches_the_same_solution():
+    """Lagging tau and gamma inside each pseudo-time step changes the path, not
+    the steady solution: the converged state matches Newton's."""
+    for length in ("metric", "streamline"):
+        p = cavity(0.01, elems=12, stabilisation=True)
+        p.element_length = length
+        newton = solve_flow(p, continuation="newton")
+        lag = solve_flow(p, continuation="ptc", lag_stabilisation=True)
+        assert lag.info["converged"] and lag.info["continuation"] == "ptc"
+        assert np.allclose(lag.U, newton.U, atol=1e-7)
+
+
+def test_lagged_residual_equals_the_true_one_at_its_own_state():
+    """``param_state`` freezes the parameters: at the state itself the residual is
+    the true one, elsewhere it differs, and its Jacobian is the frozen-parameter
+    derivative (checked against finite differences)."""
+    p = cavity(0.01, elems=6, stabilisation=True)
+    asm = FlowAssembler(p)
+    F = asm.body_load()
+    rng = np.random.default_rng(3)
+    U = 0.2 * rng.standard_normal(asm.space.ndof)
+    V = U + 0.05 * rng.standard_normal(U.size)
+    assert np.allclose(asm.steady_residual(U, F, param_state=U), asm.steady_residual(U, F),
+                       atol=1e-14)
+    assert not np.allclose(asm.steady_residual(V, F, param_state=U), asm.steady_residual(V, F))
+    R, J = asm.steady_residual_jacobian(V, F, param_state=U)
+    d = rng.standard_normal(U.size)
+    eps = 1e-6
+    fd = (asm.steady_residual(V + eps * d, F, param_state=U)
+          - asm.steady_residual(V - eps * d, F, param_state=U)) / (2 * eps)
+    assert np.linalg.norm(J @ d - fd) < 1e-6 * np.linalg.norm(fd)
+
+
 def test_mixed_boundary_layer_mesh_cylinder():
     pytest.importorskip("meshio")
     mesh = read_mesh(MESHES / "cylinder_bl.msh")
