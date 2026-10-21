@@ -88,8 +88,9 @@ def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
         # towards the new free stream, blended by wall distance (the wall keeps
         # the old, wall-aligned flow; the far field turns fully), so neither
         # the flow nor the SA solve faces the raw far-field jump.  ``alpha0``
-        # in the file records the angle the state was converged at
-        state = np.load(restart)
+        # in the file records the angle the state was converged at; ``restart``
+        # is a file name or a dict with the same entries (angle continuation)
+        state = restart if isinstance(restart, dict) else np.load(restart)
         U = np.array(state["U"], dtype=float)
         da = a - np.radians(float(state["alpha0"])) if "alpha0" in state else a
         if abs(da) > 1e-12:
@@ -187,6 +188,9 @@ def main(argv=None):
     parser.add_argument("--outdir", default="turb_airfoil_out")
     parser.add_argument("--restart", default=None, metavar="FILE",
                         help="state_a<alpha>.npz of a previous run: skip the viscosity ramp")
+    parser.add_argument("--alpha-step", type=float, default=None, metavar="DEG",
+                        help="with --restart: reach --alpha from the restart angle in steps "
+                             "of this size, each solve starting from the previous one")
     parser.add_argument("--turbulent-start", action="store_true",
                         help="start from a mixing-length eddy viscosity at the final Reynolds "
                              "number instead of the viscosity ramp")
@@ -203,12 +207,27 @@ def main(argv=None):
     outdir.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
-    rans, res = run(args.mesh, args.alpha, args.re, verbose=args.verbose,
-                    max_outer=args.max_outer, tol=args.tol, restart=args.restart,
-                    turbulent=args.turbulent_start,
-                    viscosity_ramp=(tuple(args.viscosity_ramp)
-                                    if args.viscosity_ramp is not None else None),
-                    flow_options={"continuation": args.continuation})
+    # angle continuation: from the restart state's angle to the target in steps
+    # of --alpha-step, each solve starting from the previous converged state
+    path = [args.alpha]
+    restart = args.restart
+    if args.alpha_step and restart is not None:
+        a0 = float(np.load(restart)["alpha0"])
+        n = max(1, int(np.ceil(abs(args.alpha - a0) / args.alpha_step - 1e-9)))
+        path = list(np.linspace(a0, args.alpha, n + 1)[1:])
+    for alpha in path:
+        rans, res = run(args.mesh, alpha, args.re, verbose=args.verbose,
+                        max_outer=args.max_outer, tol=args.tol, restart=restart,
+                        turbulent=args.turbulent_start,
+                        viscosity_ramp=(tuple(args.viscosity_ramp)
+                                        if args.viscosity_ramp is not None else None),
+                        flow_options={"continuation": args.continuation})
+        print(f"RANS at alpha = {alpha:g}: {len(rans.history)} outer iterations, "
+              f"converged = {rans.converged}, CL = {res['CL']:.4f}, CD = {res['CD']:.5f}, "
+              f"{time.time() - t0:.0f} s")
+        restart = {"U": rans.flow.U, "nu_tilde": rans.nu_tilde, "alpha0": alpha}
+        if len(path) > 1:
+            np.savez_compressed(outdir / f"state_a{alpha:g}.npz", **restart)
     print(f"RANS: {len(rans.history)} outer iterations, converged = {rans.converged}, "
           f"{time.time() - t0:.0f} s")
     suffix = f"a{args.alpha:g}"
