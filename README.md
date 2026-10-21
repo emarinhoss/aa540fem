@@ -545,7 +545,7 @@ Schaefer-Turek cylinder benchmark at Re = 20:
 
 (lift is two orders of magnitude smaller than drag; on the boundary-layer
 mesh `cylinder_bl.msh` with stabilisation the same case gives
-C_D = 5.5795, C_L = 0.0106, both on the reference).  The laminar flat plate
+C_D = 5.5813, C_L = 0.0107, within 0.03 % and 1e-4 of the reference).  The laminar flat plate
 at Re_L = 1e5 (`examples/flat_plate.py`, stabilised, pseudo-transient
 continuation from rest in 10 steps, 30 s) gives a skin friction within 6.2 %
 of Blasius for 1e4 < Re_x < 1e5 (mean 2.8 %; the largest deviation is at
