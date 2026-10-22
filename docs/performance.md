@@ -204,25 +204,27 @@ theta distributed fieldsplit       4      6.96  9 factorisations, |dU|/|U| = 9e-
 
 | mesh | unknowns | solver | Newton it. | wall | peak RSS | C_D | C_L | dp |
 |---|---|---|---|---|---|---|---|---|
-| `cyl3d_coarse.msh` | 81k | MUMPS | 7 | 268 s | 4.0 GB | 6.2397 | -0.0164 | 0.1758 |
-| `cyl3d_coarse.msh` | 81k | fieldsplit / LSC, ILU(1) | 7 | 235 s | 3.1 GB | 6.2397 | -0.0164 | 0.1758 |
-| `cyl3d_coarse.msh` | 81k | 4 MPI ranks x 1 thread, domain decomposition, MUMPS (`--distributed`) | 7 | 97 s | | 6.2397 | -0.0164 | 0.1758 |
-| `cylinder3d_tet10.msh` | 132k | MUMPS | 7 | 592 s | 6.6 GB | 6.2273 | 0.0141 | 0.1742 |
-| `cyl3d_bl.msh` (cylinder refined, channel coarsened) | 99k | MUMPS, Newton then PTC | 6 | 492 s | | 6.3770 | 0.0540 | 0.1806 |
-| `cyl3d_fine2.msh` | 227k | fieldsplit / LSC, ILU(1) | 7 | 992 s | 8.5 GB | 6.2073 | 0.0138 | 0.1718 |
-| `cylinder3d1z_bl.msh` extruded, 5 graded layers (prisms + boundary-layer hexahedra) | 164k | 4 MPI ranks, MUMPS, start from the scaled 2-D solution | 4 | 364 s | | 6.1702 | 0.0112 | 0.1656 |
-| `cylinder3d1z_bl.msh` extruded, 7 graded layers | 222k | fieldsplit / LSC, ILU(1), 2-D start | 4 | 1055 s | | 6.1812 | 0.0105 | 0.1685 |
+| `cyl3d_coarse.msh` | 81k | MUMPS | 7 | 50 s | 3.8 GB | 6.2268 | -0.0165 | 0.1752 |
+| `cyl3d_coarse.msh` | 81k | fieldsplit / LSC, ILU(1) | 7 | 191 s | 3.1 GB | 6.2268 | -0.0165 | 0.1752 |
+| `cyl3d_coarse.msh` | 81k | 4 MPI ranks x 1 thread, domain decomposition, MUMPS (`--distributed`) | 7 | 76 s | | 6.2268 | -0.0165 | 0.1752 |
+| `cylinder3d_tet10.msh` | 132k | MUMPS | 7 | 103 s | 6.6 GB | 6.2196 | 0.0144 | 0.1740 |
+| `cyl3d_bl.msh` (cylinder refined, channel coarsened) | 99k | MUMPS, Newton then PTC | 6 | 84 s | | 6.3698 | 0.0537 | 0.1803 |
+| `cyl3d_fine2.msh` | 227k | fieldsplit / LSC, ILU(1) | 7 | 936 s | 8.5 GB | 6.2036 | 0.0139 | 0.1717 |
+| `cylinder3d1z_bl.msh` extruded, 5 graded layers (prisms + boundary-layer hexahedra) | 164k | 4 MPI ranks, MUMPS, start from the scaled 2-D solution | 4 | 180 s | | 6.1701 | 0.0112 | 0.1656 |
+| `cylinder3d1z_bl.msh` extruded, 7 graded layers | 222k | fieldsplit / LSC, ILU(1), 2-D start | 4 | 754 s | | 6.1820 | 0.0105 | 0.1677 |
 
-Reference 6.185 / 0.0094 / 0.1710.  In 3-D the factorisation dominates a
-Newton iteration (about 40 s of the 38 s per iteration at 81k unknowns,
-80 s at 132k) and its memory grows faster than the problem (4.0, 6.6 GB);
-the Krylov solver takes about the same time per iteration and less memory,
-and is the only option here beyond 150k unknowns on this 15 GB machine.
-The domain decomposition on four ranks solves the 81k case in 97 s against
-268 s for one process with four threads: in 3-D the per-rank assembly and
-the distributed factorisation both gain, and `mpirun -n 4 python
-examples/cylinder3d.py --distributed --threads 1` is the way to run these
-cases on one machine.
+Reference 6.185 / 0.0094 / 0.1710.  The times were re-measured with the
+exact Laplacian of the curved cells (the numbers moved by at most 0.2 % in
+C_D) on a PETSc 3.25 build with MUMPS and OpenBLAS; the memory column is
+from the earlier runs (the matrices keep their sparsity).  With this build
+one process with four threads factorises the 81k case fastest, 50 s for
+seven Newton iterations, ahead of four MPI ranks (76 s) and the Krylov
+solver (191 s), and 132k unknowns take 103 s; the direct solver's memory
+grows faster than the problem (3.8 GB at 81k, 6.6 GB at 132k), so the
+Krylov solver, slower per iteration but leaner, is the only option here
+beyond 150k unknowns on this 15 GB machine, and `mpirun -n 4 python
+examples/cylinder3d.py --distributed --threads 1` spreads the memory
+across ranks (the 164k extruded case in 180 s).
 Newton from the Stokes start needs heavy damping on the first steps and
 on the cylinder-refined mesh stalls, where the pseudo-transient
 continuation takes over (three steps to |R| = 1e-5, then Newton).
@@ -236,8 +238,8 @@ drag and pressure difference both sit inside the benchmark intervals, at
 164k unknowns, and its lift (0.0112) is the closest to the reference of
 any mesh so far; seven layers (222k unknowns, the Krylov solver: eight
 layers, 252k unknowns, is killed by the 15 GB limit at the third Newton
-step) move all three further towards the reference, C_D 6.181, C_L
-0.0105, dp 0.1685, so the spanwise resolution is what the lift still
+step) move all three further towards the reference, C_D 6.182, C_L
+0.0105, dp 0.1677, so the spanwise resolution is what the lift still
 needs.  Its Newton solve starts from the 2-D solution of the
 cross-section times the parabolic spanwise profile (the flag builds it):
 the residual starts 50x lower than from rest and four full Newton steps
