@@ -164,7 +164,8 @@ def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
     fo = {"rtol": 5e-4, "atol": 1e-5 if restart is None else 1e-8, "max_ptc": 60,
           "dtau0": 0.1, "lag_stabilisation": True}
     if restart is not None:
-        fo.update(dtau0=1.0, dtau_growth=1.5, inner_newton=0, max_ptc=200)
+        fo.update(dtau0=1.0, dtau_growth=1.5, inner_newton=0, max_ptc=200,
+                  lag_stabilisation=False)
     fo.update(kw.pop("flow_options", None) or {})
     kw["flow_options"] = fo
     if kw.get("viscosity_ramp") is None:
