@@ -165,6 +165,20 @@ def test_ptc_dtau_max_caps_the_pseudo_time_step():
     assert max(capped.info["dtau"]) <= 0.5
 
 
+def test_linearly_implicit_ptc_and_growth_floor_reach_the_same_solution():
+    """One Newton iteration per pseudo-time step (``inner_newton=0``) and a least
+    growth factor of the step change the path, not the steady solution."""
+    p = cavity(0.01, elems=12, stabilisation=True)
+    newton = solve_flow(p, continuation="newton")
+    for kw in ({"inner_newton": 0}, {"inner_newton": 0, "lag_stabilisation": True},
+               {"dtau_growth": 1.5}):
+        sol = solve_flow(p, continuation="ptc", max_ptc=100, **kw)
+        assert sol.info["converged"], kw
+        assert np.allclose(sol.U, newton.U, atol=1e-7), kw
+    steps = solve_flow(p, continuation="ptc", dtau_growth=1.5).info["dtau"]
+    assert all(b >= 1.5 * a * (1 - 1e-12) for a, b in zip(steps, steps[1:]) if b > a)
+
+
 def test_ptc_with_lagged_stabilisation_reaches_the_same_solution():
     """Lagging tau and gamma inside each pseudo-time step changes the path, not
     the steady solution: the converged state matches Newton's."""

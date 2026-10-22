@@ -20,7 +20,10 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
     ``inner_newton`` Newton iterations; it is accepted only when its own
     residual has dropped to ``inner_rtol`` of its initial value (otherwise
     the step is retried with ``dtau / 4``: an unconverged implicit step must
-    never be accepted, its error accumulates).  ``dtau`` grows by switched
+    never be accepted, its error accumulates).  ``inner_newton=0`` takes a
+    single, linearly implicit iteration per step instead, kept unless the
+    residual more than doubles: it marches through transients whose implicit
+    steps are too nonlinear to solve at any useful step size.  ``dtau`` grows by switched
     evolution relaxation ``dtau_{k+1} = dtau_k |R_k| / |R_{k+1}|`` (bounded
     by factors 0.5 and 10) on the steady residual, so the iteration turns
     into plain Newton as the residual vanishes; ``dtau_growth`` is the least
@@ -70,7 +73,17 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
             V, RV, JV = U, R, J
         step_res = None
         ok = False
-        for inner in range(inner_newton + 1):
+        if inner_newton == 0:
+            # linearly implicit step: one Newton iteration on the step equation,
+            # kept unless the true residual more than doubles
+            elim = eliminate(add_matrices(JV, M, 1.0 / dtau), fixed)
+            solver = (method(elim.K_bc) if callable(method)
+                      else LinearSolver(elim.K_bc, method, symmetric=False))
+            delta, _ = solver.solve(elim.apply_rhs(-RV, zero))
+            V = U + delta
+            RV, JV, rV = evaluate(V, jacobian=lagged is None)
+            ok = bool(np.isfinite(rV) and rV <= 2.0 * r)
+        for inner in range(inner_newton + 1 if inner_newton > 0 else 0):
             G = RV + M @ ((V - U) / dtau)
             G[fixed] = 0.0
             g = np.linalg.norm(G)
@@ -120,7 +133,7 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
             if verbose:
                 print(f"  PTC step rejected, dtau = {dtau:.3e}")
             continue
-        if lagged is not None:                  # true residual of the accepted state
+        if lagged is not None and inner_newton > 0:   # true residual of the accepted state
             RV, JV, _ = evaluate(V, jacobian=False)
         elif JV is None:                        # Jacobian of the accepted state
             RV, JV, _ = evaluate(V)

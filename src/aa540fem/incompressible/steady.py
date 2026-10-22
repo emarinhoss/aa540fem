@@ -70,7 +70,7 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
                damping: bool = True, stokes: bool = False, continuation: str = "auto",
                dtau0: float = 1.0, max_ptc: int = 200, dtau_max: float = 1e6,
                dtau_growth: float = 1.0, local_timestep: bool = True,
-               lag_stabilisation: bool = False) -> FlowSolution:
+               lag_stabilisation: bool = False, inner_newton: int = 10) -> FlowSolution:
     """Steady Navier-Stokes (or Stokes with ``stokes=True``).
 
     ``continuation``: ``"newton"`` (damped Newton from ``U0``, the first step
@@ -85,7 +85,9 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
     a full rejected inner Newton; ``dtau_growth`` is the least growth factor
     of the step after one that did not increase the residual (SER alone keeps
     the step flat through a slow transient such as the circulation change of
-    an angle-of-attack restart).  ``lag_stabilisation`` evaluates the
+    an angle-of-attack restart); ``inner_newton`` bounds the Newton iterations
+    of each implicit pseudo-time step (0: linearly implicit steps, see
+    :func:`pseudo_transient`).  ``lag_stabilisation`` evaluates the
     stabilisation parameters ``tau`` and ``gamma`` at the start of each
     pseudo-time step inside its implicit solve (the steady solution is
     unchanged): on wall-resolved meshes the grad-div ``gamma`` of the thin
@@ -162,7 +164,8 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
                 return asm.steady_residual(V, F, param_state=lag), None
         res = pseudo_transient(residual_jacobian, U, fixed, M, method, rtol, atol, dtau0,
                                max_ptc, dtau_max=dtau_max, dtau_growth=dtau_growth,
-                               verbose=verbose, residual=residual, lagged=lagged)
+                               inner_newton=inner_newton, verbose=verbose, residual=residual,
+                               lagged=lagged)
     if not res.converged:
         warnings.warn(f"steady solve did not converge in {res.iterations} iterations "
                       f"(|R| = {res.residuals[-1]:.2e})", stacklevel=2)
