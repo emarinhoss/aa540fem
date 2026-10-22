@@ -164,7 +164,9 @@ def factorise(A, backend: str | None = None, threads: int | None = None, check: 
     a random right-hand side is verified and SuperLU is used instead when
     the relative residual exceeds 1e-8 (static pivoting on the zero pressure
     block of a saddle-point matrix can fail silently); MUMPS is retried once
-    with more workspace and iterative refinement before that.
+    with more workspace and iterative refinement before that, and the
+    fallback is skipped (with a warning) when SuperLU would not fit the
+    memory budget.
     """
     name = direct_backend(backend)
     if name == "petsc":
@@ -190,11 +192,29 @@ def factorise(A, backend: str | None = None, threads: int | None = None, check: 
                 f = PETScFactorisation(A, threads=threads, robust=True)
                 res = accuracy(f)
             if not np.isfinite(res) or res > 1e-8:
+                if not _superlu_fits(A):
+                    warnings.warn(f"PETSc/{f.solver_type} factorisation inaccurate "
+                                  f"(relative residual {res:.1e}); SuperLU would not fit "
+                                  "the memory budget, keeping it", stacklevel=2)
+                    return f
                 warnings.warn(f"PETSc/{f.solver_type} factorisation inaccurate "
                               f"(relative residual {res:.1e}); using SuperLU", stacklevel=2)
                 return SuperLUFactorisation(A)
         return f
     return SuperLUFactorisation(A)
+
+
+def _superlu_fits(A) -> bool:
+    """Whether a SuperLU fallback fits the run's memory budget, with a factor of
+    five on :func:`estimate_direct_memory`: SuperLU's column ordering fills the
+    wall-resolved boundary-layer Jacobians far more than the estimate (14 GB
+    for the 271k unknowns of the turbulent airfoil, estimated at 2.6 GB, where
+    MUMPS needs 0.8 GB), and an out-of-memory kill loses the whole run.  The
+    inaccurate factorisations that trigger the fallback come from diverging
+    Newton iterates, whose step is rejected anyway."""
+    from aa540fem.hardware import get_config
+
+    return 5 * estimate_direct_memory(A) < get_config().memory_budget
 
 
 # -- memory estimate ----------------------------------------------------

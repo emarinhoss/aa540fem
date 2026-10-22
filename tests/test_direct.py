@@ -115,3 +115,32 @@ def test_robust_mumps_retry_on_a_badly_scaled_projection_matrix():
         f = factorise(A, "petsc")
     assert f.backend == "petsc"
     assert np.linalg.norm(A @ f.solve(b) - b) / np.linalg.norm(b) < 1e-8
+
+
+def test_inaccurate_factorisation_falls_back_only_within_the_memory_budget(monkeypatch):
+    """A poor PETSc solution falls back to SuperLU when SuperLU fits the memory
+    budget and keeps the PETSc factorisation (with a warning) when it does not:
+    on wall-resolved meshes SuperLU's fill would kill the run."""
+    import aa540fem.linalg.direct as direct
+    from aa540fem.hardware import get_config
+
+    class Poor:                                             # a factorisation that solves nothing
+        backend = "petsc"
+        solver_type = "petsc"
+
+        def __init__(self, A, **kw):
+            self.n = A.shape[0]
+
+        def solve(self, b):
+            return np.zeros(self.n)
+
+    monkeypatch.setattr(direct, "PETScFactorisation", Poor)
+    monkeypatch.setattr(direct, "direct_backend", lambda backend=None: "petsc")
+    A, _ = saddle_point_system()
+    cfg = get_config()
+    monkeypatch.setattr(cfg, "memory_budget", 10 ** 12)
+    with pytest.warns(UserWarning, match="using SuperLU"):
+        assert factorise(A).backend == "superlu"
+    monkeypatch.setattr(cfg, "memory_budget", 5 * estimate_direct_memory(A) - 1)
+    with pytest.warns(UserWarning, match="keeping it"):
+        assert isinstance(factorise(A), Poor)
