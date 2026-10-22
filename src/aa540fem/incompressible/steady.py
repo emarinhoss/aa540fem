@@ -69,7 +69,8 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
                rtol: float = 1e-9, atol: float = 1e-11, max_newton: int = 30,
                damping: bool = True, stokes: bool = False, continuation: str = "auto",
                dtau0: float = 1.0, max_ptc: int = 200, dtau_max: float = 1e6,
-               local_timestep: bool = True, lag_stabilisation: bool = False) -> FlowSolution:
+               dtau_growth: float = 1.0, local_timestep: bool = True,
+               lag_stabilisation: bool = False) -> FlowSolution:
     """Steady Navier-Stokes (or Stokes with ``stokes=True``).
 
     ``continuation``: ``"newton"`` (damped Newton from ``U0``, the first step
@@ -81,7 +82,10 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
     is a CFL number; otherwise it is a global time.  ``dtau_max`` caps the
     SER growth of the pseudo-time step: on stiff warm-started states the
     x10 growth overshoots the stability boundary and every overshoot costs
-    a full rejected inner Newton.  ``lag_stabilisation`` evaluates the
+    a full rejected inner Newton; ``dtau_growth`` is the least growth factor
+    of the step after one that did not increase the residual (SER alone keeps
+    the step flat through a slow transient such as the circulation change of
+    an angle-of-attack restart).  ``lag_stabilisation`` evaluates the
     stabilisation parameters ``tau`` and ``gamma`` at the start of each
     pseudo-time step inside its implicit solve (the steady solution is
     unchanged): on wall-resolved meshes the grad-div ``gamma`` of the thin
@@ -157,8 +161,8 @@ def solve_flow(problem: FlowProblem, U0=None, method: str = "direct", verbose: b
                     return asm.steady_residual_jacobian(V, F, param_state=lag)
                 return asm.steady_residual(V, F, param_state=lag), None
         res = pseudo_transient(residual_jacobian, U, fixed, M, method, rtol, atol, dtau0,
-                               max_ptc, dtau_max=dtau_max, verbose=verbose, residual=residual,
-                               lagged=lagged)
+                               max_ptc, dtau_max=dtau_max, dtau_growth=dtau_growth,
+                               verbose=verbose, residual=residual, lagged=lagged)
     if not res.converged:
         warnings.warn(f"steady solve did not converge in {res.iterations} iterations "
                       f"(|R| = {res.residuals[-1]:.2e})", stacklevel=2)

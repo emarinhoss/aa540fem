@@ -157,8 +157,12 @@ def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
     # lag_stabilisation: the grad-div parameter of the 4e-6-thick wall cells
     # depends so steeply on the near-wall velocity that the implicit pseudo-time
     # step's Newton stalls at any step size; frozen per step it converges
+    # a restart at a new angle is a slow, smooth transient (the circulation and the
+    # wake adapt): start at CFL 1 and let the step grow by at least 1.5 per step
+    # while the residual does not increase
     fo = {"rtol": 5e-4, "atol": 1e-5 if restart is None else 1e-8, "max_ptc": 60,
-          "dtau0": 0.1, "lag_stabilisation": True}
+          "dtau0": 0.1 if restart is None else 1.0, "lag_stabilisation": True,
+          "dtau_growth": 1.0 if restart is None else 1.5}
     fo.update(kw.pop("flow_options", None) or {})
     kw["flow_options"] = fo
     if kw.get("viscosity_ramp") is None:

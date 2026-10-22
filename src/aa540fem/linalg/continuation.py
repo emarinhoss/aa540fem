@@ -11,7 +11,7 @@ from aa540fem.linalg.solvers import LinearSolver
 
 
 def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9, atol=1e-11,
-                     dtau0=0.01, max_steps=200, dtau_max=1e6, inner_newton=10,
+                     dtau0=0.01, max_steps=200, dtau_max=1e6, dtau_growth=1.0, inner_newton=10,
                      inner_rtol=1e-2, verbose=False, residual=None,
                      lagged=None) -> NewtonResult:
     """Pseudo-transient continuation: ``R(U) + (M / dtau)(U - U_k) = 0``.
@@ -23,7 +23,9 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
     never be accepted, its error accumulates).  ``dtau`` grows by switched
     evolution relaxation ``dtau_{k+1} = dtau_k |R_k| / |R_{k+1}|`` (bounded
     by factors 0.5 and 10) on the steady residual, so the iteration turns
-    into plain Newton as the residual vanishes.  ``M`` is the mass
+    into plain Newton as the residual vanishes; ``dtau_growth`` is the least
+    growth factor of a step that did not increase the residual (SER alone
+    keeps ``dtau`` flat through a slow transient).  ``M`` is the mass
     matrix (zero pressure block), so the continuity equation is never
     relaxed.
 
@@ -124,7 +126,7 @@ def pseudo_transient(residual_jacobian, U, fixed, M, method="direct", rtol=1e-9,
             RV, JV, _ = evaluate(V)
         rn = np.linalg.norm(RV)
         ratio = r / max(rn, 1e-300)
-        dtau = min(dtau_max, dtau * min(10.0, max(0.5, ratio)))
+        dtau = min(dtau_max, dtau * min(10.0, max(dtau_growth if rn <= r else 0.5, ratio)))
         U, R, J, r = V, RV, JV, rn
         k += 1
         result.T = U
