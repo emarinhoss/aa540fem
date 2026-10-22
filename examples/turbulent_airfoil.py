@@ -50,6 +50,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 from aa540fem import read_mesh  # noqa: E402
 from aa540fem.cli import add_run_arguments, configure_from_args  # noqa: E402
 from aa540fem.incompressible import FlowProblem  # noqa: E402
+from aa540fem.incompressible.assembler import FlowAssembler  # noqa: E402
 from aa540fem.turbulence import solve_rans  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -75,6 +76,41 @@ def turbulent_start(mesh, nu, u_tau=0.04, delta=0.03):
     return nt
 
 
+def turn_free_stream(asm, U, a0, a1, delta=0.05):
+    """``U`` with its free stream turned from angle ``a0`` to ``a1`` (radians).
+
+    Adds ``curl(f(d) dpsi)``, the change ``dpsi`` of the uniform-flow stream
+    function (offset to vanish on average on the wall) blended in by
+    ``f(d) = 1 - exp(-(d/delta)^2)`` of the wall distance, L2-projected on the
+    velocity space: divergence-free (to the projection error), no-slip at the
+    wall, the new free stream far away.  A rotation of the velocity field
+    instead violates continuity where the angle varies, and the first
+    pseudo-time step then needs a pressure jump of order ``1/dtau``; the
+    divergence-free projection that removes it moves the velocity of the
+    thin wall cells and spoils the boundary layer."""
+    import scipy.sparse.linalg as spla
+
+    mesh = asm.mesh
+    n = mesh.n_nodes
+    x, y = mesh.points[:, 0], mesh.points[:, 1]
+    d = mesh.wall_distance("airfoil")
+    dpsi = (np.cos(a1) - np.cos(a0)) * y - (np.sin(a1) - np.sin(a0)) * x
+    dpsi -= dpsi[mesh.bc_nodes["airfoil"]].mean()
+    psi = (1.0 - np.exp(-(d / delta) ** 2)) * dpsi
+    ru, rv = np.zeros(n), np.zeros(n)
+    for b in asm.blocks:                                 # int phi_i curl(psi)
+        pe = psi[b.conn]
+        dpx = np.einsum("eqa,ea->eq", b.dphi[0], pe)
+        dpy = np.einsum("eqa,ea->eq", b.dphi[1], pe)
+        np.add.at(ru, b.conn, np.einsum("eq,qa->ea", b.wh * dpy, b.phi))
+        np.add.at(rv, b.conn, np.einsum("eq,qa->ea", -b.wh * dpx, b.phi))
+    lu = spla.splu(asm.M[:n, :n].tocsc())
+    U = np.array(U, dtype=float, copy=True)
+    U[:n] += lu.solve(ru)
+    U[n:2 * n] += lu.solve(rv)
+    return U
+
+
 def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
         verbose=True, restart=None, turbulent=False, element_length="anisotropic", **kw):
     mesh = read_mesh(mesh_file)
@@ -88,22 +124,14 @@ def run(mesh_file=MESHES / "airfoil_naca0012_turb.msh", alpha=0.0, re=6e6,
     prob = FlowProblem(mesh, mu=nu, rho=1.0, stabilisation=True, bc=bc,
                        element_length=element_length)
     if restart is not None:
-        # state of a previous run at another angle: rotate its velocity field
-        # towards the new free stream, blended by wall distance (the wall keeps
-        # the old, wall-aligned flow; the far field turns fully), so neither
-        # the flow nor the SA solve faces the raw far-field jump.  ``alpha0``
-        # in the file records the angle the state was converged at; ``restart``
-        # is a file name or a dict with the same entries (angle continuation)
+        # state of a previous run at another angle (``alpha0`` in the file; a
+        # file name or a dict with the same entries, angle continuation): turn
+        # its free stream to the new angle with a divergence-free correction
         state = restart if isinstance(restart, dict) else np.load(restart)
         U = np.array(state["U"], dtype=float)
         da = a - np.radians(float(state["alpha0"])) if "alpha0" in state else a
         if abs(da) > 1e-12:
-            d = mesh.wall_distance("airfoil")
-            theta = da * np.minimum(d, 1.0)           # 0 at the wall -> da at 1 chord
-            n = mesh.n_nodes
-            u0, v0 = U[:n].copy(), U[n:2 * n].copy()
-            U[:n] = np.cos(theta) * u0 - np.sin(theta) * v0
-            U[n:2 * n] = np.sin(theta) * u0 + np.cos(theta) * v0
+            U = turn_free_stream(FlowAssembler(prob), U, a - da, a)
         kw.update(U0=U, nu_tilde0=state["nu_tilde"])
     else:
         # smooth start: the free stream damped over ~ the trailing-edge boundary-
