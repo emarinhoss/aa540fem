@@ -83,13 +83,19 @@ the kernels, not in a bespoke sparse assembly.
 
 **Kernels.** `backends/numpy_kernels.py` (einsum) is the reference,
 `backends/numba_kernels.py` / `numba_sa.py` the threaded twins; `tests/test_backends.py`
-checks they agree to 1e-12 over the option matrix. `momentum_terms(...,
+checks they agree to 1e-12 over the option matrix. `FlowProblem.element_length`
+selects the stabilisation length: `"metric"` (default), `"streamline"`, or
+`"anisotropic"` (viscous limit from `lambda_min lambda_max` of the metric, grad-div
+length along the long cell axis; needed on wall cells with aspect ratios in the
+thousands, e.g. the turbulent airfoil). `momentum_terms(...,
 jacobian=False)` is the residual-only path; the Newton/PTC loops take a
 `residual=` callable so trial points never assemble a Jacobian.
 
 **Nonlinear solves.** `linalg/newton.py::newton_iterate` (damped, optional
 frozen Jacobian, accepts a `solver=` from a previous call so time steps share a
-factorisation) and `linalg/continuation.py::pseudo_transient`. `method` may be
+factorisation) and `linalg/continuation.py::pseudo_transient` (`inner_newton=0`:
+one linearly implicit iteration per step; `dtau_growth`: least step growth;
+`lagged`: stabilisation parameters frozen per step). `method` may be
 `"direct"`, `"fieldsplit"` or a callable `A -> solver`;
 `incompressible/steady.py::linear_method` resolves it, including `--linear petsc`
 from the run configuration. The theta scheme carries its factorisation across
@@ -97,7 +103,8 @@ steps (`reuse_jacobian=True`) and refactorises only when modified Newton stops
 contracting by 3x per iteration; `info["factorisations"]` reports the count.
 
 **Linear solvers.** `linalg/direct.py::factorise` picks SuperLU or PETSc LU with
-MUMPS (`AA540FEM_DIRECT`), falls back on a residual check, and under `mpirun`
+MUMPS (`AA540FEM_DIRECT`), falls back on a residual check (to SuperLU only if it
+fits the memory budget: on wall-resolved meshes it fills far more than MUMPS), and under `mpirun`
 uses `parallel/distributed.py::DistributedFactorisation` (replicated matrix,
 distributed MUMPS). `linalg/krylov.py::FieldSplitSolver` is FGMRES + PCFIELDSPLIT
 (Schur, lower) with the least-squares-commutator preconditioner

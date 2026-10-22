@@ -4,7 +4,7 @@
                                          [--no-plot]
 
 Wall-resolved unit-chord NACA 0012 (mesh ``airfoil_naca0012_turb.msh``: 34
-quadrilateral layers from the surface, first cell 4e-6 so y+ is about 1 at
+quadrilateral layers from the surface, first layer 4e-6 so y+ is about 1 at
 Re = 6e6, fanned around the sharp trailing edge, inside triangles, far
 field at 100 chords).  The mesh is unrotated: the angle of attack sets the
 far-field velocity ``(cos a, sin a)``, and drag and lift are the force
@@ -22,12 +22,21 @@ percent of difference in the pressure coefficients is expected:
      10        1.0909 / 1.0983         0.01231 / 0.01242
      15        1.5461 / 1.5547         0.02124 / 0.02159
 
-Only ``alpha = 0`` (the default) reproduces the reference here; the lifting
-cases do not converge on this mesh, and no choice of ramp or tolerance
-fixes that -- the residual norm is dominated by the far field while the
-Newton direction stops descending inside the boundary layer, where the
-frozen SUPG ``tau`` is least consistent.  Section 4b of
-``docs/turbulence.md`` records the diagnosis and what would unblock it.
+``alpha = 0`` starts cold through a viscosity ramp; the lifting cases
+continue from a converged state by angle steps:
+
+    python examples/turbulent_airfoil.py --alpha 0
+    python examples/turbulent_airfoil.py --alpha 10 --alpha-step 2.5 \
+        --restart turb_airfoil_out/state_a0.npz
+
+Measured on the full mesh: alpha = 0 Cd 0.00836 (+2.0 % from CFL3D), alpha =
+10 CL 1.0729 and Cd 0.01304 (-1.6 % and +5.9 %).  Two things make the
+lifting case converge, see section 4b of ``docs/turbulence.md``: the
+``"anisotropic"`` element length of the stabilisation (on these wall cells
+the metric one keeps no streamwise upwinding and the converged boundary
+layer separates through a node-to-node pressure mode), and restarts that
+turn the free stream with a divergence-free correction and march with
+linearly implicit pseudo-time steps.
 
 The sub-solves are bounded (``sa_max_steps``, ``max_ptc``): a capped flow
 solve acts as pseudo-time marching and the outer iterations carry the state
@@ -214,8 +223,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--mesh", default=str(MESHES / "airfoil_naca0012_turb.msh"))
     parser.add_argument("--alpha", type=float, default=0.0,
-                        help="angle of attack (degrees); only 0 converges on this mesh, "
-                             "see section 4b of docs/turbulence.md")
+                        help="angle of attack (degrees); lifting cases from a --restart with "
+                             "--alpha-step, see section 4b of docs/turbulence.md")
     parser.add_argument("--re", type=float, default=6e6, help="chord Reynolds number")
     parser.add_argument("--max-outer", type=int, default=12)
     parser.add_argument("--tol", type=float, default=5e-3,

@@ -110,28 +110,28 @@ Krylov section below).
 | cylinder shedding, twice-finer mesh (`cylinder_bl_fine.msh`, 41k nodes, 92k unknowns) | 74 min (one factorisation per step) | 39 min (factorisation carried across steps: 699 for 1600 steps) | St 0.3014, C_D,max 3.2320, C_L,max 0.9972, identical |
 | cylinder shedding, dt 0.0025 (3200 steps, coarse mesh) | - | 29 min | St 0.3016, C_D,max 3.2271, C_L,max 0.9885 |
 
-### NACA 0012 at Re 6e6 (`turbulent_airfoil.py`, SuperLU, one thread)
+### NACA 0012 at Re 6e6 (`turbulent_airfoil.py`)
 
 This case is factorisation-bound and much dearer than the plate: 271148
-unknowns, about 35 s per SuperLU factorisation on this machine (no PETSc or
-MUMPS in the environment the numbers below were measured in), so a run is
-3 to 5 hours per angle and has to be launched detached.  The measured
-alpha = 0 result is in the validation table of `README.md` (Cd 0.00741,
-9.5 % below CFL3D, all of it friction).
+unknowns.  With SuperLU on one thread a factorisation took about 35 s and a
+run 3 to 5 hours per angle; with numba assembly and MUMPS on 4 threads a
+factorisation of the flow Jacobian takes 2.8 s (6.5e7 factor entries, 0.8
+GB), the cold alpha = 0 run (viscosity ramp 100, 10, 1) 43 minutes and the
+angle continuation from it to alpha = 10 in 2.5-degree steps 74 minutes
+(21, 18, 19 and 15 minutes per step).  The results are in the validation
+table of `README.md` (alpha = 0: Cd 0.00836, +2.0 % from CFL3D; alpha = 10:
+CL 1.0729, Cd 0.01304, -1.6 % and +5.9 %).  SuperLU is no fallback here: on
+one poorly solved matrix (a diverging inner Newton iterate) it grew past
+14 GB, so `factorise` keeps the MUMPS factorisation when SuperLU would not
+fit the memory budget.
 
 The residual norm on this mesh is not a useful convergence measure on its
-own, which is worth knowing before tuning any tolerance here: the
-validated alpha = 0 state itself sits at |R| = 96.6, because the far-field
-cells (100 chords out) dominate the norm while the boundary-layer cells
-(9.1e-7 chords) contribute about 1e-4 of it.  One theta step from that
-state with a fresh Jacobian reaches |R| = 0.93 -- a hundred times better
-converged than the state that matched the reference Cp -- and then reports
-no descent direction, with 0.82 of the remaining 0.93 inside d < 1e-4.  So
-absolute tolerances mean nothing here, relative ones stop the lifting case
-after a single iteration (the far-field part of the residual is nearly
-linear and dies in one step), and the honest per-stage controls are a step
-budget plus the force trajectory.  The alpha = 10 case is unresolved for
-this reason; `README.md` and `docs/turbulence.md` record the diagnosis.
+own: the far-field cells (100 chords out) dominate it while the
+boundary-layer cells contribute a tiny fraction, so absolute tolerances
+mean little and relative ones stop a flow solve once the far field has
+settled.  The outer RANS iteration is judged on the change of the eddy
+viscosity instead, with the sub-solves bounded by step budgets
+(`max_ptc`, `sa_max_steps`) and the force history as the check.
 
 The refined shedding run is the data point for the scaling of the direct
 solver: 3.8x the unknowns cost 3.9x the time per step (2.8 s against

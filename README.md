@@ -332,7 +332,12 @@ al. 2007), which is smooth in the velocity; Tezduyar's flow-direction
 element length is available as `element_length="streamline"`, but on
 strongly stretched boundary-layer cells it jumps between the cell length
 and its height with the slightest rotation of the velocity and stalls
-Newton.  The Jacobian is consistent, including the derivatives of the
+Newton.  `element_length="anisotropic"` keeps `u.G u` but takes the viscous
+limit from the geometric mean of the longest and shortest cell dimensions
+(`nu^2 lambda_min lambda_max`) and the grad-div length along the long axis:
+the same on square cells, and on wall cells with aspect ratios in the
+thousands it keeps the streamwise upwinding that the height-limited metric
+form loses (the turbulent airfoil needs it).  The Jacobian is consistent, including the derivatives of the
 stabilisation parameters (a finite-difference check to 1e-9 is in the
 tests).
 `continuation="ptc"` (or the `"auto"` fallback, which restarts from the
@@ -340,7 +345,9 @@ best Newton iterate) solves backward-Euler pseudo-time steps with a few
 Newton iterations each and grows the step by switched evolution
 relaxation; the step is local (scaled by the convective time scale of the
 surrounding cells, so `dtau0` is a CFL number) and starts from the divergence-free projection of the
-initial velocity.  It is what makes the laminar flat plate at Re 1e5
+initial velocity when that lowers the residual.  `inner_newton=0` takes one
+linearly implicit iteration per step instead, and `dtau_growth` sets a least
+growth factor of the step; the airfoil's angle-of-attack restarts use both.  It is what makes the laminar flat plate at Re 1e5
 converge from rest (10 pseudo-time steps), where plain Newton diverges.  Boundary-layer
 meshes (quadrilaterals extruded from the wall inside a triangular mesh)
 come from `make_meshes.make_flat_plate()` and the `boundary_layer=` option
@@ -394,37 +401,31 @@ velocity, so one mesh serves every angle.  Compared with the NASA
 Turbulence Modeling Resource SA results (CFL3D and FUN3D, 897x257, M 0.15;
 this solver is incompressible, so the comparison holds only at low Mach):
 
-| alpha = 0 | computed | CFL3D | FUN3D |
-|---|---|---|---|
-| CL | 0.00012 | 0 | 0 |
-| Cd | 0.00741 | 0.00819 (-9.5 %) | 0.00812 (-8.7 %) |
-| Cd pressure / friction | 0.00154 / 0.00588 | | |
+| alpha | CL computed | CL CFL3D / FUN3D | Cd computed | Cd CFL3D / FUN3D |
+|---|---|---|---|---|
+| 0 | -0.0001 | 0 | 0.00836 | 0.00819 / 0.00812 (+2.0 % / +2.9 %) |
+| 2.5 | 0.2757 | | 0.00858 | |
+| 5 | 0.5490 | | 0.00935 | |
+| 7.5 | 0.8166 | | 0.01076 | |
+| 10 | 1.0729 | 1.0909 / 1.0983 (-1.6 % / -2.3 %) | 0.01304 | 0.01231 / 0.01242 (+5.9 % / +5.0 %) |
 
-Cp agrees with the TMR distribution within about 0.01 everywhere
-(`--tmr-cp` overlays their file); the whole deficit is in the friction,
-which is the same bias the flat plate shows against White's correlation
-(4.6 to 12.8 % low, see the table above), and it grows downstream where
-the high-order node placement in the curved boundary-layer quadrilaterals
-leaves the mid-chord centre nodes about 25 % off-centre.  The boundary
-layer is resolved: at mid-chord u = 0.076, 0.471, 0.692 and 0.833 of the
-free stream at wall distances 9e-6, 1e-4, 1e-3 and 3e-3.
-
-At alpha = 10 this case is **not converged** in this release.  A cold start
-walks the viscosity ramp down to Re 6e6 without the near-wall velocity ever
-developing: the boundary-layer cells are so small that they contribute
-almost nothing to the residual norm, which at incidence is dominated by the
-far-field circulation adjustment, so every flow sub-solve is accepted after
-one iteration and the first cells keep their initial profile (Cd_f about
-5e-5 instead of 6e-3).  Forcing real work per stage converges the upper
-rungs of the ramp honestly (CL 1.011 at Re 6e5) but the states below a
-viscosity factor of 3 are not marchable, and neither backward Euler nor a
-time-ramped far-field direction from the converged alpha = 0 solution gets
-past it: Newton stops with no descent direction while the residual that
-remains sits entirely inside the boundary layer (0.82 of 0.93 within
-d < 1e-4), which is where the SUPG tau linearisation is least consistent.
-`docs/turbulence.md` records the diagnosis; the lifting case needs either a
-consistent stabilisation linearisation or a residual measure that is not
-dominated by the far field.
+At alpha = 0 the drag splits into 0.00141 pressure and 0.00695 friction; the
+surface is clean (Cp within 1e-4 of a local quadratic fit node to node, no
+reversed wall shear).  alpha = 0 starts cold through the viscosity ramp
+(100, 10, 1: 43 minutes with numba and MUMPS on 4 threads); the lifting
+cases follow by angle continuation from it in 2.5-degree steps
+(`--restart turb_airfoil_out/state_a0.npz --alpha 10 --alpha-step 2.5`:
+74 minutes for the four steps, each restart turning the free stream with a
+divergence-free stream-function correction and marching with linearly
+implicit pseudo-time steps).  This needs the `"anisotropic"` element length
+of the stabilisation (the example's default): with the `"metric"` one the
+wall cells (aspect ratios in the thousands) keep no streamwise upwinding, a node-to-node
+pressure mode runs through the boundary layer and the converged layer
+separates.  At alpha = 10 a much weaker form of that mode remains on the
+aft upper surface (0.25 < x < 0.87, Cp ripple up to 0.008, median 7e-4),
+while the wall shear stays positive everywhere.  `docs/turbulence.md`
+section 4b records how the lifting case was diagnosed and what each part of
+the fix does.
 
 For the incompressible system the pressure is a constraint multiplier, not
 an ODE unknown, so the RK45 scheme is applied to the velocity with a
